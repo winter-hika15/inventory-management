@@ -90,6 +90,13 @@ export default function Admin() {
       }
 
       setAdminRole(localRole);
+
+      // 本部管理者（role === 'admin'）以外はアクセスを禁止し、トップページへリダイレクト
+      if (localRole !== 'admin') {
+        router.push('/');
+        return;
+      }
+
       const shopEmail = localEmail;
       setCurrentShopEmail(shopEmail);
       setAdminEmail(shopEmail);

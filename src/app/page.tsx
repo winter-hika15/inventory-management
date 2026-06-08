@@ -539,15 +539,10 @@ export default function Home() {
           </span>
         </div>
         <div className="admin-nav-links">
-          {adminRole === 'admin' ? (
+          {adminRole === 'admin' && (
             <button onClick={() => router.push('/system-admin')} className="btn-nav" style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}>
               <Lock size={13} />
               本部管理画面へ
-            </button>
-          ) : (
-            <button onClick={() => router.push('/admin')} className="btn-nav">
-              <Lock size={13} />
-              管理者設定へ
             </button>
           )}
           <button onClick={handleLogout} className="btn-nav btn-logout">
