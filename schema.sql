@@ -54,5 +54,11 @@ create table restock_history (
 
 alter table restock_history disable row level security;
 
+-- 権限の付与（認証キーからのアクセスを許可する）
+grant all on table restock_history to anon;
+grant all on table restock_history to authenticated;
+grant all on table restock_history to service_role;
+
+
 
 
