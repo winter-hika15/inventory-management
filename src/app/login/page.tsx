@@ -2,8 +2,44 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, AlertCircle, ArrowLeft, Key } from 'lucide-react';
+import { Database, AlertCircle, Store } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
+
+interface Shop {
+  id: string;
+  name: string;
+  email: string;
+  password?: string;
+  role: 'admin' | 'store';
+  created_at: string;
+}
+
+const DEFAULT_INITIAL_SHOPS: Shop[] = [
+  {
+    id: 'admin-id',
+    name: '本部管理者',
+    email: 'admin@example.com',
+    password: 'admin123',
+    role: 'admin',
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 'shopA-id',
+    name: '店舗A',
+    email: 'shopA@example.com',
+    password: 'shopA123',
+    role: 'store',
+    created_at: new Date().toISOString()
+  },
+  {
+    id: 'shopB-id',
+    name: '店舗B',
+    email: 'shopB@example.com',
+    password: 'shopB123',
+    role: 'store',
+    created_at: new Date().toISOString()
+  }
+];
 
 export default function Login() {
   const router = useRouter();
@@ -14,20 +50,26 @@ export default function Login() {
   const [usingSupabase, setUsingSupabase] = useState(false);
 
   useEffect(() => {
-    // すでにログインしているかチェック
     const checkSession = async () => {
       const configured = isSupabaseConfigured();
       setUsingSupabase(configured);
 
-      if (configured) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          router.push('/admin');
-        }
-      } else {
-        const localSession = localStorage.getItem('admin_session');
-        if (localSession === 'active') {
-          router.push('/admin');
+      // ローカルストレージの初期店舗データの初期化
+      const localShops = localStorage.getItem('shops');
+      if (!localShops) {
+        localStorage.setItem('shops', JSON.stringify(DEFAULT_INITIAL_SHOPS));
+      }
+
+      // すでにログインしているかチェック。セッションがあれば適切なダッシュボードへ
+      const localSession = localStorage.getItem('admin_session');
+      const localEmail = localStorage.getItem('admin_email');
+      const localRole = localStorage.getItem('admin_role') || 'store';
+
+      if (localSession === 'active' && localEmail) {
+        if (localRole === 'admin') {
+          router.push('/system-admin');
+        } else {
+          router.push('/');
         }
       }
     };
@@ -41,31 +83,63 @@ export default function Login() {
 
     if (usingSupabase) {
       try {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+        // Supabase の shops テーブルから認証
+        const { data: shops, error } = await supabase
+          .from('shops')
+          .select('*')
+          .eq('email', email)
+          .eq('password', password);
 
         if (error) throw error;
 
-        router.push('/admin');
+        if (shops && shops.length > 0) {
+          const shop = shops[0];
+          localStorage.setItem('admin_session', 'active');
+          localStorage.setItem('admin_email', shop.email);
+          localStorage.setItem('admin_role', shop.role || 'store');
+          localStorage.setItem('admin_name', shop.name);
+
+          if (shop.role === 'admin') {
+            router.push('/system-admin');
+          } else {
+            router.push('/');
+          }
+        } else {
+          setErrorMsg('店舗メールアドレスまたはパスワードが正しくありません。');
+        }
       } catch (err: any) {
-        setErrorMsg(err.message || 'ログインに失敗しました。認証情報を確認してください。');
+        setErrorMsg(err.message || 'ログインに失敗しました。データベースの接続を確認してください。');
       } finally {
         setLoading(false);
       }
     } else {
-      // ローカルストレージ動作時の模擬ログイン
+      // ローカルストレージ動作時のログイン
       setTimeout(() => {
-        // 設定されたローカルパスワードを取得（なければデフォルト admin123）
-        const savedPassword = localStorage.getItem('local_admin_password') || 'admin123';
-        const savedEmail = localStorage.getItem('local_admin_email') || 'admin@example.com';
+        const localShopsData = localStorage.getItem('shops');
+        let shops: Shop[] = [];
+        if (localShopsData) {
+          try {
+            shops = JSON.parse(localShopsData);
+          } catch (e) {
+            shops = DEFAULT_INITIAL_SHOPS;
+          }
+        }
 
-        if (email === savedEmail && password === savedPassword) {
+        const matchedShop = shops.find(s => s.email === email && s.password === password);
+
+        if (matchedShop) {
           localStorage.setItem('admin_session', 'active');
-          router.push('/admin');
+          localStorage.setItem('admin_email', matchedShop.email);
+          localStorage.setItem('admin_role', matchedShop.role);
+          localStorage.setItem('admin_name', matchedShop.name);
+
+          if (matchedShop.role === 'admin') {
+            router.push('/system-admin');
+          } else {
+            router.push('/');
+          }
         } else {
-          setErrorMsg('メールアドレスまたはパスワードが正しくありません。');
+          setErrorMsg('店舗メールアドレスまたはパスワードが正しくありません。');
         }
         setLoading(false);
       }, 600);
@@ -77,12 +151,12 @@ export default function Login() {
       <div className="login-card animate-fade-in">
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
           <div style={{ background: 'rgba(139, 92, 246, 0.15)', color: 'var(--accent)', padding: '0.75rem', borderRadius: '50%' }}>
-            <Key size={30} />
+            <Store size={30} />
           </div>
         </div>
         
-        <h1 className="login-title">管理者ログイン</h1>
-        <p className="login-subtitle">商品の新規登録・編集などの管理者機能へアクセスします。</p>
+        <h1 className="login-title">在庫管理システム ログイン</h1>
+        <p className="login-subtitle">アカウント情報（本部管理者または各店舗）を入力してログインしてください。</p>
 
         {errorMsg && (
           <div style={{ 
@@ -108,7 +182,7 @@ export default function Login() {
             <input 
               type="email" 
               className="form-input" 
-              placeholder="admin@example.com" 
+              placeholder="store@example.com" 
               value={email}
               onChange={e => setEmail(e.target.value)}
               required
@@ -133,7 +207,7 @@ export default function Login() {
             style={{ width: '100%', padding: '0.8rem' }}
             disabled={loading}
           >
-            {loading ? 'ログイン中...' : 'ログインする'}
+            {loading ? 'ログイン中...' : 'ログイン'}
           </button>
         </form>
 
@@ -145,30 +219,34 @@ export default function Login() {
             border: '1px solid rgba(245, 158, 11, 0.1)', 
             padding: '1rem', 
             borderRadius: '10px',
-            fontSize: '0.8rem',
+            fontSize: '0.75rem',
             color: 'var(--text-secondary)'
           }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#fbbf24', fontWeight: 600, marginBottom: '0.4rem' }}>
               <Database size={14} />
               ローカル開発用アカウント
             </span>
-            <p>メールアドレス: <code>admin@example.com</code></p>
-            <p>パスワード: <code>admin123</code></p>
-            <p style={{ marginTop: '0.4rem', fontSize: '0.75rem', opacity: 0.8 }}>※ログイン後、管理者設定画面から変更可能です。</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <div>
+                <strong>🔑 本部管理者:</strong>
+                <p>アドレス: <code>admin@example.com</code></p>
+                <p>パスワード: <code>admin123</code></p>
+              </div>
+              <div style={{ borderTop: '1px dashed rgba(255, 255, 255, 0.1)', paddingTop: '0.4rem' }}>
+                <strong>🏪 店舗A:</strong>
+                <p>アドレス: <code>shopA@example.com</code></p>
+                <p>パスワード: <code>shopA123</code></p>
+              </div>
+              <div style={{ borderTop: '1px dashed rgba(255, 255, 255, 0.1)', paddingTop: '0.4rem' }}>
+                <strong>🏪 店舗B:</strong>
+                <p>アドレス: <code>shopB@example.com</code></p>
+                <p>パスワード: <code>shopB123</code></p>
+              </div>
+            </div>
           </div>
         )}
-
-        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-          <button 
-            onClick={() => router.push('/')} 
-            className="btn-nav"
-            style={{ border: 'none' }}
-          >
-            <ArrowLeft size={14} />
-            一般画面へ戻る
-          </button>
-        </div>
       </div>
     </div>
   );
 }
+

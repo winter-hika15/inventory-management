@@ -15,7 +15,8 @@ import {
   X, 
   Save, 
   User, 
-  Lock 
+  Lock,
+  Store
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 
@@ -27,6 +28,7 @@ interface Item {
   threshold_low: number;
   threshold_high: number;
   unit?: string;
+  shop_id: string;
   created_at: string;
 }
 
@@ -36,6 +38,8 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   const [usingSupabase, setUsingSupabase] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; type: 'success' | 'error' | 'info' }[]>([]);
+  const [currentShopEmail, setCurrentShopEmail] = useState('');
+  const [adminRole, setAdminRole] = useState('store');
   
   // 新規登録フォーム用
   const [newItemName, setNewItemName] = useState('');
@@ -68,48 +72,52 @@ export default function Admin() {
     }, 3000);
   };
 
-  // セッションチェック
+  // セッションチェックとデータロード
   useEffect(() => {
     const initPage = async () => {
       setLoading(true);
       const configured = isSupabaseConfigured();
       setUsingSupabase(configured);
 
-      if (configured) {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          router.push('/login');
-          return;
-        }
-        
-        // Supabase接続時の管理者Emailをセット
-        if (session.user) {
-          setAdminEmail(session.user.email || '');
-        }
+      // ローカルストレージからセッション取得
+      const localSession = localStorage.getItem('admin_session');
+      const localEmail = localStorage.getItem('admin_email');
+      const localRole = localStorage.getItem('admin_role') || 'store';
 
-        // データロード
+      if (localSession !== 'active' || !localEmail) {
+        router.push('/login');
+        return;
+      }
+
+      setAdminRole(localRole);
+      const shopEmail = localEmail;
+      setCurrentShopEmail(shopEmail);
+      setAdminEmail(shopEmail);
+
+      if (configured) {
+        // 自店舗の商品のみロード
         try {
-          const { data, error } = await supabase.from('items').select('*');
+          const { data, error } = await supabase
+            .from('items')
+            .select('*')
+            .eq('shop_id', shopEmail);
+          
           if (error) throw error;
           setItems(sortItems(data || []));
         } catch (error: any) {
           addToast(`データロード失敗: ${error.message}`, 'error');
         }
       } else {
-        const localSession = localStorage.getItem('admin_session');
-        if (localSession !== 'active') {
-          router.push('/login');
-          return;
-        }
-
-        // ローカル接続時の管理者Emailをセット
-        const savedEmail = localStorage.getItem('local_admin_email') || 'admin@example.com';
-        setAdminEmail(savedEmail);
-
-        // データロード
+        // 自店舗の商品のみロード
         const localData = localStorage.getItem('inventory_items');
         if (localData) {
-          setItems(sortItems(JSON.parse(localData)));
+          try {
+            const allItems: Item[] = JSON.parse(localData);
+            const shopItems = allItems.filter(item => item.shop_id === shopEmail);
+            setItems(sortItems(shopItems));
+          } catch (e) {
+            setItems([]);
+          }
         }
       }
       setLoading(false);
@@ -138,11 +146,24 @@ export default function Admin() {
     });
   };
 
-  // データ保存
-  const saveItemsState = (updatedItems: Item[]) => {
-    const sorted = sortItems(updatedItems);
+  // 全体データのうち、現在の店舗以外のデータを崩さずに同期保存
+  const syncItemsState = (shopUpdatedItems: Item[]) => {
+    const sorted = sortItems(shopUpdatedItems);
     setItems(sorted);
-    localStorage.setItem('inventory_items', JSON.stringify(sorted));
+
+    const localData = localStorage.getItem('inventory_items');
+    let allItems: Item[] = [];
+    if (localData) {
+      try {
+        allItems = JSON.parse(localData);
+      } catch (e) {
+        allItems = [];
+      }
+    }
+
+    const otherShopsItems = allItems.filter(item => item.shop_id !== currentShopEmail);
+    const merged = [...otherShopsItems, ...sorted];
+    localStorage.setItem('inventory_items', JSON.stringify(merged));
   };
 
   // 商品登録
@@ -165,6 +186,7 @@ export default function Admin() {
       threshold_low: low,
       threshold_high: high,
       unit: newItemUnit,
+      shop_id: currentShopEmail, // ログイン中の店舗IDを紐付け
     };
 
     if (usingSupabase) {
@@ -177,7 +199,7 @@ export default function Admin() {
         if (error) throw error;
 
         if (data && data[0]) {
-          saveItemsState([...items, data[0]]);
+          syncItemsState([...items, data[0]]);
           addToast(`商品「${data[0].name}」をDBに登録しました`, 'success');
         }
       } catch (error: any) {
@@ -189,7 +211,7 @@ export default function Admin() {
         ...newItemPayload,
         created_at: new Date().toISOString()
       };
-      saveItemsState([...items, created]);
+      syncItemsState([...items, created]);
       addToast(`商品「${created.name}」をローカルに登録しました`, 'success');
     }
 
@@ -231,12 +253,12 @@ export default function Admin() {
       stock,
       threshold_low: low,
       threshold_high: high,
-      unit: editUnit
+      unit: editUnit,
+      shop_id: currentShopEmail
     };
 
-    // UIをオプティミスティックに更新
     const updated = items.map(i => i.id === id ? { ...i, ...updatedItem } : i);
-    saveItemsState(updated);
+    syncItemsState(updated);
 
     if (usingSupabase) {
       try {
@@ -262,7 +284,7 @@ export default function Admin() {
     if (!confirm(`「${name}」を削除してもよろしいですか？`)) return;
 
     const updated = items.filter(i => i.id !== id);
-    saveItemsState(updated);
+    syncItemsState(updated);
 
     if (usingSupabase) {
       try {
@@ -290,16 +312,16 @@ export default function Admin() {
             password: newPassword
           });
           if (error) throw error;
-          addToast('管理者パスワードを更新しました。', 'success');
+          addToast('パスワードを更新しました。', 'success');
         }
 
         // メールアドレス変更
-        if (adminEmail) {
+        if (adminEmail && adminEmail !== currentShopEmail) {
           const { error } = await supabase.auth.updateUser({
             email: adminEmail
           });
           if (error) throw error;
-          addToast('管理者メールアドレスの更新リクエストを送信しました。確認メールをチェックしてください。', 'info');
+          addToast('メールアドレスの更新リクエストを送信しました。受信トレイを確認してください。', 'info');
         }
 
         setNewPassword('');
@@ -309,14 +331,27 @@ export default function Admin() {
         setSettingLoading(false);
       }
     } else {
-      // ローカル用ログイン設定
+      // ローカルストレージ動作時の店舗パスワード変更
       setTimeout(() => {
-        if (adminEmail) {
-          localStorage.setItem('local_admin_email', adminEmail);
+        if (adminEmail && adminEmail !== currentShopEmail) {
+          // ダミーアドレス変更処理
+          localStorage.setItem('admin_email', adminEmail);
+          setCurrentShopEmail(adminEmail);
+          
+          // 前のメールアドレスのデータを新しいアドレスに移行
+          const localData = localStorage.getItem('inventory_items');
+          if (localData) {
+            try {
+              const allItems: Item[] = JSON.parse(localData);
+              const migrated = allItems.map(item => item.shop_id === currentShopEmail ? { ...item, shop_id: adminEmail } : item);
+              localStorage.setItem('inventory_items', JSON.stringify(migrated));
+            } catch (e) {}
+          }
         }
+        
         if (newPassword) {
-          localStorage.setItem('local_admin_password', newPassword);
-          addToast('ローカル管理者パスワードを更新しました。', 'success');
+          localStorage.setItem(`local_password_${adminEmail || currentShopEmail}`, newPassword);
+          addToast('ローカル店舗パスワードを更新しました。', 'success');
         }
         addToast('ログイン設定を保存しました。', 'success');
         setNewPassword('');
@@ -327,12 +362,11 @@ export default function Admin() {
 
   // ログアウト処理
   const handleLogout = async () => {
-    if (usingSupabase) {
-      await supabase.auth.signOut();
-    } else {
-      localStorage.removeItem('admin_session');
-    }
-    router.push('/');
+    localStorage.removeItem('admin_session');
+    localStorage.removeItem('admin_email');
+    localStorage.removeItem('admin_role');
+    localStorage.removeItem('admin_name');
+    router.push('/login');
   };
 
   return (
@@ -352,10 +386,18 @@ export default function Admin() {
       {/* 管理者ナビバー */}
       <nav className="admin-nav">
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
-          <User size={18} style={{ color: 'var(--accent)' }} />
-          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>管理者: {adminEmail}</span>
+          <Store size={18} style={{ color: 'var(--accent)' }} />
+          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>
+            {adminRole === 'admin' ? `本部管理者 (${currentShopEmail})` : `店舗アカウント: ${currentShopEmail}`}
+          </span>
         </div>
         <div className="admin-nav-links">
+          {adminRole === 'admin' && (
+            <button onClick={() => router.push('/system-admin')} className="btn-nav" style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}>
+              <Lock size={13} />
+              本部管理画面へ
+            </button>
+          )}
           <button onClick={() => router.push('/')} className="btn-nav">
             <ArrowLeft size={14} />
             一般画面へ戻る
@@ -368,8 +410,8 @@ export default function Admin() {
       </nav>
 
       <header className="app-header" style={{ marginBottom: '1.5rem' }}>
-        <h1>管理者ダッシュボード</h1>
-        <p>商品の新規登録・編集・削除、およびログイン用のアカウント設定を行います。</p>
+        <h1>店舗管理者設定</h1>
+        <p>自店舗専用の商品の新規登録・編集・削除、およびこの店舗アカウントのセキュリティ設定を行います。</p>
       </header>
 
       {loading ? (
@@ -382,7 +424,7 @@ export default function Admin() {
           <section className="glass-card">
             <h2 style={{ fontSize: '1.2rem', fontWeight: 600, marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <Package size={20} />
-              登録商品の一覧・編集
+              自店舗商品の一覧・編集
             </h2>
 
             <div className="items-list">
@@ -623,12 +665,12 @@ export default function Admin() {
             <section className="glass-card">
               <h2 className="sidebar-title">
                 <Lock size={18} style={{ color: '#fbbf24' }} />
-                ログイン設定
+                店舗ログイン設定
               </h2>
               
               <form onSubmit={handleSaveSettings}>
                 <div className="form-group">
-                  <label>管理者メールアドレス</label>
+                  <label>店舗メールアドレス</label>
                   <input 
                     type="email" 
                     className="form-input" 

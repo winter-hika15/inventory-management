@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { 
   Package, 
   TrendingDown, 
-  CheckCircle2, 
   AlertTriangle, 
   Plus, 
   Minus, 
@@ -16,7 +15,10 @@ import {
   Lock,
   Edit2,
   X,
-  Save
+  Save,
+  LogOut,
+  Store,
+  CheckCircle2
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 
@@ -28,10 +30,12 @@ interface Item {
   threshold_low: number;
   threshold_high: number;
   unit?: string;
+  shop_id: string;
   created_at: string;
 }
 
-const INITIAL_ITEMS: Item[] = [
+// 店舗別のデフォルト初期データ定義
+const DEFAULT_INITIAL_ITEMS: Item[] = [
   {
     id: '1',
     name: 'プレミアムコーヒー豆',
@@ -40,6 +44,7 @@ const INITIAL_ITEMS: Item[] = [
     threshold_low: 5,
     threshold_high: 20,
     unit: '袋',
+    shop_id: 'shopA@example.com',
     created_at: new Date(Date.now() - 500000).toISOString()
   },
   {
@@ -50,6 +55,7 @@ const INITIAL_ITEMS: Item[] = [
     threshold_low: 5,
     threshold_high: 20,
     unit: '箱',
+    shop_id: 'shopA@example.com',
     created_at: new Date(Date.now() - 400000).toISOString()
   },
   {
@@ -60,6 +66,7 @@ const INITIAL_ITEMS: Item[] = [
     threshold_low: 10,
     threshold_high: 40,
     unit: '個',
+    shop_id: 'shopB@example.com',
     created_at: new Date(Date.now() - 300000).toISOString()
   },
   {
@@ -70,6 +77,7 @@ const INITIAL_ITEMS: Item[] = [
     threshold_low: 3,
     threshold_high: 15,
     unit: '個',
+    shop_id: 'shopB@example.com',
     created_at: new Date(Date.now() - 200000).toISOString()
   },
   {
@@ -80,6 +88,7 @@ const INITIAL_ITEMS: Item[] = [
     threshold_low: 4,
     threshold_high: 10,
     unit: '個',
+    shop_id: 'shopB@example.com',
     created_at: new Date(Date.now() - 100000).toISOString()
   }
 ];
@@ -90,6 +99,8 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [usingSupabase, setUsingSupabase] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; type: 'success' | 'error' | 'info' }[]>([]);
+  const [currentShopEmail, setCurrentShopEmail] = useState('');
+  const [adminRole, setAdminRole] = useState('store');
 
   // 新規登録フォーム用
   const [newItemName, setNewItemName] = useState('');
@@ -139,69 +150,123 @@ export default function Home() {
     });
   };
 
-  // データ初期ロード
+  // セッションチェックとデータロード
   useEffect(() => {
-    async function loadData() {
+    async function initPage() {
       setLoading(true);
       const configured = isSupabaseConfigured();
       setUsingSupabase(configured);
 
+      // ローカルストレージからセッション取得
+      const localSession = localStorage.getItem('admin_session');
+      const localEmail = localStorage.getItem('admin_email');
+      const localRole = localStorage.getItem('admin_role') || 'store';
+
+      if (localSession !== 'active' || !localEmail) {
+        router.push('/login');
+        return;
+      }
+
+      setAdminRole(localRole);
+      const shopEmail = localEmail;
+      setCurrentShopEmail(shopEmail);
+
       if (configured) {
+        // Supabaseからデータ取得（shop_idが一致するものに絞り込み）
         try {
-          const { data, error } = await supabase.from('items').select('*');
+          const { data, error } = await supabase
+            .from('items')
+            .select('*')
+            .eq('shop_id', shopEmail);
+
           if (error) throw error;
 
           if (data && data.length > 0) {
             setItems(sortItems(data));
           } else {
-            // Supabaseが空の場合、初期データを挿入
-            const { error: insertError } = await supabase
-              .from('items')
-              .insert(INITIAL_ITEMS.map(({ id, ...rest }) => rest));
+            // もしこの店舗のデータが1件もない場合、初期の店舗別サンプルデータを自動登録
+            const shopInitialItems = DEFAULT_INITIAL_ITEMS.filter(item => item.shop_id === shopEmail);
+            
+            if (shopInitialItems.length > 0) {
+              const { error: insertError } = await supabase
+                .from('items')
+                .insert(shopInitialItems.map(({ id, ...rest }) => rest)); // idは自動生成
 
-            if (insertError) throw insertError;
+              if (insertError) throw insertError;
 
-            const { data: refetchedData } = await supabase.from('items').select('*');
-            if (refetchedData) {
-              setItems(sortItems(refetchedData));
+              const { data: refetched } = await supabase
+                .from('items')
+                .select('*')
+                .eq('shop_id', shopEmail);
+              
+              if (refetched) {
+                setItems(sortItems(refetched));
+              }
+            } else {
+              setItems([]);
             }
           }
-          addToast('Supabaseから最新データをロードしました', 'success');
+          addToast(`店舗 ${shopEmail} のデータをロードしました`, 'success');
         } catch (error: any) {
-          console.error('Supabase接続失敗。ローカルストレージへフォールバックします:', error.message);
-          setUsingSupabase(false);
-          loadFromLocalStorage();
-          addToast('一時的にローカルストレージデータを使用しています', 'error');
+          console.error('Supabaseロード失敗:', error.message);
+          addToast(`DB接続エラー: ${error.message}`, 'error');
         }
       } else {
-        loadFromLocalStorage();
+        // ローカルストレージ動作
+        // ローカルストレージからロード
+        const localData = localStorage.getItem('inventory_items');
+        let allItems: Item[] = [];
+        if (localData) {
+          try {
+            allItems = JSON.parse(localData);
+          } catch (e) {
+            allItems = [];
+          }
+        }
+
+        // ログイン中の店舗データのみに絞り込む
+        let shopItems = allItems.filter(item => item.shop_id === shopEmail);
+
+        // この店舗のデータが初めての場合、初期データをセット
+        if (shopItems.length === 0) {
+          const shopInitialItems = DEFAULT_INITIAL_ITEMS.filter(item => item.shop_id === shopEmail);
+          
+          if (shopInitialItems.length > 0) {
+            allItems = [...allItems, ...shopInitialItems];
+            localStorage.setItem('inventory_items', JSON.stringify(allItems));
+            shopItems = shopInitialItems;
+          }
+        }
+
+        setItems(sortItems(shopItems));
+        addToast(`店舗 ${shopEmail} (ローカル) のデータをロードしました`, 'info');
       }
       setLoading(false);
     }
 
-    loadData();
-  }, []);
+    initPage();
+  }, [router]);
 
-  const loadFromLocalStorage = () => {
+  // 全体データのうち、現在の店舗以外のデータを崩さずにローカル状態および保存用を同期する
+  const syncItemsState = (shopUpdatedItems: Item[]) => {
+    const sorted = sortItems(shopUpdatedItems);
+    setItems(sorted);
+
+    // ローカルストレージには「全店舗分」のデータをマージして保持する
     const localData = localStorage.getItem('inventory_items');
+    let allItems: Item[] = [];
     if (localData) {
       try {
-        setItems(sortItems(JSON.parse(localData)));
+        allItems = JSON.parse(localData);
       } catch (e) {
-        setItems(sortItems(INITIAL_ITEMS));
-        localStorage.setItem('inventory_items', JSON.stringify(INITIAL_ITEMS));
+        allItems = [];
       }
-    } else {
-      setItems(sortItems(INITIAL_ITEMS));
-      localStorage.setItem('inventory_items', JSON.stringify(INITIAL_ITEMS));
     }
-    addToast('ローカルデータを使用中', 'info');
-  };
 
-  const saveItemsState = (updatedItems: Item[]) => {
-    const sorted = sortItems(updatedItems);
-    setItems(sorted);
-    localStorage.setItem('inventory_items', JSON.stringify(sorted));
+    // 現在の店舗以外のデータを残し、現在の店舗のデータをマージ
+    const otherShopsItems = allItems.filter(item => item.shop_id !== currentShopEmail);
+    const merged = [...otherShopsItems, ...sorted];
+    localStorage.setItem('inventory_items', JSON.stringify(merged));
   };
 
   // 1個売る
@@ -210,7 +275,7 @@ export default function Home() {
     const newStock = item.stock - 1;
 
     const updated = items.map(i => i.id === item.id ? { ...i, stock: newStock } : i);
-    saveItemsState(updated);
+    syncItemsState(updated);
 
     if (usingSupabase) {
       try {
@@ -233,7 +298,7 @@ export default function Home() {
     const newStock = item.stock + 1;
 
     const updated = items.map(i => i.id === item.id ? { ...i, stock: newStock } : i);
-    saveItemsState(updated);
+    syncItemsState(updated);
 
     if (usingSupabase) {
       try {
@@ -271,6 +336,7 @@ export default function Home() {
       threshold_low: low,
       threshold_high: high,
       unit: newItemUnit,
+      shop_id: currentShopEmail, // ログイン中の店舗IDを紐付け
     };
 
     if (usingSupabase) {
@@ -283,7 +349,7 @@ export default function Home() {
         if (error) throw error;
 
         if (data && data[0]) {
-          saveItemsState([...items, data[0]]);
+          syncItemsState([...items, data[0]]);
           addToast(`商品「${data[0].name}」を追加しました`, 'success');
         }
       } catch (error: any) {
@@ -295,7 +361,7 @@ export default function Home() {
         ...newItemPayload,
         created_at: new Date().toISOString()
       };
-      saveItemsState([...items, created]);
+      syncItemsState([...items, created]);
       addToast(`商品「${created.name}」を追加しました（ローカル）`, 'success');
     }
 
@@ -336,11 +402,12 @@ export default function Home() {
       stock,
       threshold_low: low,
       threshold_high: high,
-      unit: editUnit
+      unit: editUnit,
+      shop_id: currentShopEmail
     };
 
     const updated = items.map(i => i.id === id ? { ...i, ...updatedItem } : i);
-    saveItemsState(updated);
+    syncItemsState(updated);
 
     if (usingSupabase) {
       try {
@@ -366,7 +433,7 @@ export default function Home() {
     if (!confirm(`「${name}」を削除してもよろしいですか？`)) return;
 
     const updated = items.filter(i => i.id !== id);
-    saveItemsState(updated);
+    syncItemsState(updated);
 
     if (usingSupabase) {
       try {
@@ -379,6 +446,15 @@ export default function Home() {
     } else {
       addToast(`商品「${name}」を削除しました`, 'info');
     }
+  };
+
+  // ログアウト処理
+  const handleLogout = async () => {
+    localStorage.removeItem('admin_session');
+    localStorage.removeItem('admin_email');
+    localStorage.removeItem('admin_role');
+    localStorage.removeItem('admin_name');
+    router.push('/login');
   };
 
   // 集計計算
@@ -401,8 +477,35 @@ export default function Home() {
         ))}
       </div>
 
+      {/* 店舗用ナビバー */}
+      <nav className="admin-nav">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
+          <Store size={18} style={{ color: 'var(--accent)' }} />
+          <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>
+            {adminRole === 'admin' ? `本部管理者 (${currentShopEmail})` : `ログイン店舗: ${currentShopEmail}`}
+          </span>
+        </div>
+        <div className="admin-nav-links">
+          {adminRole === 'admin' ? (
+            <button onClick={() => router.push('/system-admin')} className="btn-nav" style={{ borderColor: 'var(--accent)', color: 'var(--accent)' }}>
+              <Lock size={13} />
+              本部管理画面へ
+            </button>
+          ) : (
+            <button onClick={() => router.push('/admin')} className="btn-nav">
+              <Lock size={13} />
+              管理者設定へ
+            </button>
+          )}
+          <button onClick={handleLogout} className="btn-nav btn-logout">
+            <LogOut size={13} />
+            ログアウト
+          </button>
+        </div>
+      </nav>
+
       {/* ヘッダー */}
-      <header className="app-header">
+      <header className="app-header" style={{ marginBottom: '1.5rem' }}>
         <h1>Smart Inventory</h1>
         <p>初心者にやさしいリアルタイム在庫・発注管理システム</p>
       </header>
@@ -478,6 +581,7 @@ export default function Home() {
             <div className="empty-state">
               <Package className="empty-state-icon" />
               <p>登録されている商品がありません。</p>
+              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>右側のフォームから商品を追加してください。</p>
             </div>
           ) : (
             <div className="items-list">
@@ -654,7 +758,7 @@ export default function Home() {
           )}
         </section>
 
-        {/* 右側サイドバー (新規商品登録 ＆ クイック設定 ＆ ログイン設定への遷移) */}
+        {/* 右側サイドバー (新規商品登録 ＆ ガイド) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
           {/* 新規商品登録カード */}
           <section className="glass-card">
@@ -744,24 +848,6 @@ export default function Home() {
                 商品を登録する
               </button>
             </form>
-          </section>
-
-          {/* 管理者ログイン（ログイン設定用） */}
-          <section className="glass-card">
-            <h2 className="sidebar-title" style={{ fontSize: '1rem', marginBottom: '0.8rem' }}>
-              ⚙️ 管理者設定
-            </h2>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: '1.4' }}>
-              管理者ログイン用のメールアドレスやパスワードを変更するには、管理者ログインを行ってください。
-            </p>
-            <button 
-              onClick={() => router.push('/login')} 
-              className="btn"
-              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', fontSize: '0.85rem', padding: '0.55rem', border: '1px solid rgba(255,255,255,0.1)', background: 'transparent' }}
-            >
-              <Lock size={13} />
-              管理者ログイン設定へ
-            </button>
           </section>
 
           {/* クイックガイド */}
