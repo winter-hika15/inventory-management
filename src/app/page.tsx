@@ -21,7 +21,8 @@ import {
   CheckCircle2,
   Calendar,
   FileText,
-  TrendingUp
+  TrendingUp,
+  Download
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 
@@ -178,6 +179,131 @@ export default function Home() {
       }
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
+  };
+
+  // CSVダウンロード用共通ヘルパー関数
+  const handleDownloadCSV = (filename: string, headers: string[], rows: string[][]) => {
+    const escapeCSV = (val: string) => {
+      let result = val.replace(/"/g, '""');
+      if (result.includes(',') || result.includes('\n') || result.includes('"')) {
+        result = `"${result}"`;
+      }
+      return result;
+    };
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(escapeCSV).join(','))
+    ].join('\n');
+
+    // Excelでの文字化けを防ぐため、UTF-8 BOMを付加
+    const bom = new Uint8Array([0xEF, 0xBB, 0xBF]);
+    const blob = new Blob([bom, csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    addToast('CSVファイルをダウンロードしました', 'success');
+  };
+
+  // 在庫一覧CSVのダウンロード
+  const downloadInventoryCSV = () => {
+    if (items.length === 0) {
+      addToast('ダウンロードする商品データがありません', 'error');
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const filename = `在庫一覧_${currentShopEmail}_${today}.csv`;
+    const headers = ['商品ID', '商品名', '在庫数', '単位', '単価(円)', '合計金額(円)', '不足しきい値', '過剰しきい値', '状況'];
+    
+    const rows = items.map(item => {
+      const status = getStatus(item.stock, item.threshold_low, item.threshold_high);
+      const statusLabel = status === 'low' ? '不足 (要発注)' : status === 'high' ? '過剰' : '適正';
+      return [
+        item.id,
+        item.name,
+        item.stock.toString(),
+        item.unit || '個',
+        item.price.toString(),
+        (item.stock * item.price).toString(),
+        item.threshold_low.toString(),
+        item.threshold_high.toString(),
+        statusLabel
+      ];
+    });
+
+    handleDownloadCSV(filename, headers, rows);
+  };
+
+  // 選択月の商品別補充実績CSVのダウンロード
+  const downloadMonthlyReportCSV = () => {
+    if (filteredHistory.length === 0) {
+      addToast('ダウンロードする補充データがありません', 'error');
+      return;
+    }
+    const filename = `商品別補充実績_${currentShopEmail}_${selectedMonth}.csv`;
+    const headers = ['商品名', '補充時単価(円)', '補充数量', '合計金額(円)'];
+    
+    interface ProductSummary {
+      itemName: string;
+      quantity: number;
+      price: number;
+      total: number;
+    }
+    const summaries: { [key: string]: ProductSummary } = {};
+    filteredHistory.forEach(log => {
+      const key = `${log.item_name}-${log.price}`;
+      const itemTotal = log.quantity * log.price;
+      if (summaries[key]) {
+        summaries[key].quantity += log.quantity;
+        summaries[key].total += itemTotal;
+      } else {
+        summaries[key] = {
+          itemName: log.item_name,
+          quantity: log.quantity,
+          price: log.price,
+          total: itemTotal,
+        };
+      }
+    });
+
+    const rows = Object.values(summaries).map(summary => [
+      summary.itemName,
+      summary.price.toString(),
+      summary.quantity.toString(),
+      summary.total.toString()
+    ]);
+
+    handleDownloadCSV(filename, headers, rows);
+  };
+
+  // 選択月の補充詳細ログCSVのダウンロード
+  const downloadDetailLogCSV = () => {
+    if (filteredHistory.length === 0) {
+      addToast('ダウンロードする補充データがありません', 'error');
+      return;
+    }
+    const filename = `補充詳細ログ_${currentShopEmail}_${selectedMonth}.csv`;
+    const headers = ['日時', '商品ID', '商品名', '補充数量', '補充時単価(円)', '合計金額(円)'];
+    
+    const rows = filteredHistory.map(log => {
+      const logDate = new Date(log.created_at);
+      const formattedDate = `${logDate.getFullYear()}/${logDate.getMonth() + 1}/${logDate.getDate()} ${String(logDate.getHours()).padStart(2, '0')}:${String(logDate.getMinutes()).padStart(2, '0')}`;
+      return [
+        formattedDate,
+        log.item_id || '',
+        log.item_name,
+        log.quantity.toString(),
+        log.price.toString(),
+        (log.quantity * log.price).toString()
+      ];
+    });
+
+    handleDownloadCSV(filename, headers, rows);
   };
 
   // 特定店舗の商品データのロード
@@ -852,11 +978,22 @@ export default function Home() {
 
           {activeTab === 'inventory' ? (
             <>
-              <div className="list-section-header">
-                <h2>在庫状況一覧</h2>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  全 {items.length} 品目 (総在庫数: {totalStockCount}点)
-                </span>
+              <div className="list-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <div>
+                  <h2>在庫状況一覧</h2>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                    全 {items.length} 品目 (総在庫数: {totalStockCount}点)
+                  </span>
+                </div>
+                <button 
+                  onClick={downloadInventoryCSV}
+                  className="btn-download"
+                  title="在庫一覧をExcel対応のCSV形式でダウンロードします"
+                  disabled={items.length === 0}
+                >
+                  <Download size={14} />
+                  CSV保存 (Excel対応)
+                </button>
               </div>
 
               {loading ? (
@@ -1123,10 +1260,20 @@ export default function Home() {
                   </div>
 
                   {/* 品目別集計表 */}
-                  <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <Package size={16} style={{ color: 'var(--accent)' }} />
-                    商品別補充実績
-                  </h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', margin: 0 }}>
+                      <Package size={16} style={{ color: 'var(--accent)' }} />
+                      商品別補充実績
+                    </h3>
+                    <button 
+                      onClick={downloadMonthlyReportCSV}
+                      className="btn-download"
+                      title="商品別補充実績をExcel対応のCSV形式でダウンロードします"
+                    >
+                      <Download size={14} />
+                      集計CSV保存 (Excel対応)
+                    </button>
+                  </div>
                   <div className="report-table-wrapper">
                     <table className="report-table">
                       <thead>
@@ -1153,10 +1300,20 @@ export default function Home() {
                   </div>
 
                   {/* 詳細ログ（タイムライン） */}
-                  <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                    <Calendar size={16} style={{ color: 'var(--accent)' }} />
-                    補充詳細ログ（タイムライン）
-                  </h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                    <h3 style={{ fontSize: '1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem', margin: 0 }}>
+                      <Calendar size={16} style={{ color: 'var(--accent)' }} />
+                      補充詳細ログ（タイムライン）
+                    </h3>
+                    <button 
+                      onClick={downloadDetailLogCSV}
+                      className="btn-download"
+                      title="詳細履歴ログをExcel対応のCSV形式でダウンロードします"
+                    >
+                      <Download size={14} />
+                      詳細ログCSV保存 (Excel対応)
+                    </button>
+                  </div>
                   <div className="timeline-container">
                     {filteredHistory.map((log) => {
                       const logDate = new Date(log.created_at);
