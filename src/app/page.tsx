@@ -236,10 +236,18 @@ export default function Home() {
       ];
     });
 
+    // 末尾にサマリー行を追加
+    const totalValue = items.reduce((sum, item) => sum + (item.stock * item.price), 0);
+    const totalStockCount = items.reduce((sum, item) => sum + item.stock, 0);
+    rows.push([]);
+    rows.push(['総品目数', `${items.length} 品目`]);
+    rows.push(['総在庫数', `${totalStockCount} 点`]);
+    rows.push(['在庫総資産額', `¥${totalValue.toLocaleString()}`]);
+
     handleDownloadCSV(filename, headers, rows);
   };
 
-  // 選択月の商品別補充実績CSVのダウンロード
+  // 選択月の商品別補充実績CSV of ダウンロード
   const downloadMonthlyReportCSV = () => {
     if (filteredHistory.length === 0) {
       addToast('ダウンロードする補充データがありません', 'error');
@@ -255,9 +263,17 @@ export default function Home() {
       total: number;
     }
     const summaries: { [key: string]: ProductSummary } = {};
+    let totalRestockAmount = 0;
+    let totalRestockQuantity = 0;
+    const itemNamesSet = new Set<string>();
+
     filteredHistory.forEach(log => {
       const key = `${log.item_name}-${log.price}`;
       const itemTotal = log.quantity * log.price;
+      totalRestockAmount += itemTotal;
+      totalRestockQuantity += log.quantity;
+      itemNamesSet.add(log.item_name);
+
       if (summaries[key]) {
         summaries[key].quantity += log.quantity;
         summaries[key].total += itemTotal;
@@ -277,6 +293,12 @@ export default function Home() {
       summary.quantity.toString(),
       summary.total.toString()
     ]);
+
+    // 末尾にサマリー行を追加
+    rows.push([]);
+    rows.push(['総補充品目数', `${itemNamesSet.size} 品目`]);
+    rows.push(['総補充数量', `${totalRestockQuantity} 点`]);
+    rows.push(['総補充額', `¥${totalRestockAmount.toLocaleString()}`]);
 
     handleDownloadCSV(filename, headers, rows);
   };
@@ -302,6 +324,22 @@ export default function Home() {
         (log.quantity * log.price).toString()
       ];
     });
+
+    // 末尾にサマリー行を追加
+    let totalRestockAmount = 0;
+    let totalRestockQuantity = 0;
+    const itemNamesSet = new Set<string>();
+
+    filteredHistory.forEach(log => {
+      totalRestockAmount += log.quantity * log.price;
+      totalRestockQuantity += log.quantity;
+      itemNamesSet.add(log.item_name);
+    });
+
+    rows.push([]);
+    rows.push(['総補充品目数', `${itemNamesSet.size} 品目`]);
+    rows.push(['総補充数量', `${totalRestockQuantity} 点`]);
+    rows.push(['総補充額', `¥${totalRestockAmount.toLocaleString()}`]);
 
     handleDownloadCSV(filename, headers, rows);
   };
