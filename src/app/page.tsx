@@ -317,6 +317,7 @@ export default function Home() {
         }
       } catch (error: any) {
         console.error('補充履歴の保存に失敗しました:', error.message);
+        addToast(`補充履歴の保存失敗: ${error.message}`, 'error');
       }
     } else {
       const createdLog: RestockHistory = {

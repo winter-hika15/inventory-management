@@ -44,7 +44,7 @@ alter table items disable row level security;
 -- 補充（発注）履歴テーブルの作成
 create table restock_history (
   id uuid default gen_random_uuid() primary key,
-  item_id uuid, -- 関連する商品のID
+  item_id text, -- 関連する商品のID
   item_name text not null, -- 履歴保存時の商品名
   quantity integer not null, -- 補充された数量
   price integer not null, -- 補充時の単価
