@@ -808,27 +808,31 @@ export default function Home() {
                         <Plus size={15} />
                         補充する
                       </button>
-                      <button 
-                        onClick={() => startEditing(item)} 
-                        className="btn-edit"
-                        style={{ marginLeft: '0.4rem' }}
-                        title="商品情報を編集します"
-                      >
-                        <Edit2 size={15} />
-                      </button>
-                      <button 
-                        onClick={() => handleDeleteItem(item.id, item.name)}
-                        style={{ 
-                          background: 'transparent', 
-                          border: 'none', 
-                          color: 'var(--text-muted)', 
-                          cursor: 'pointer',
-                          padding: '0.5rem'
-                        }}
-                        title="商品を削除します"
-                      >
-                        <Trash2 size={15} />
-                      </button>
+                      {adminRole === 'admin' && (
+                        <>
+                          <button 
+                            onClick={() => startEditing(item)} 
+                            className="btn-edit"
+                            style={{ marginLeft: '0.4rem' }}
+                            title="商品情報を編集します"
+                          >
+                            <Edit2 size={15} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteItem(item.id, item.name)}
+                            style={{ 
+                              background: 'transparent', 
+                              border: 'none', 
+                              color: 'var(--text-muted)', 
+                              cursor: 'pointer',
+                              padding: '0.5rem'
+                            }}
+                            title="商品を削除します"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -839,95 +843,109 @@ export default function Home() {
 
         {/* 右側サイドバー (新規商品登録 ＆ ガイド) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-          {/* 新規商品登録カード */}
-          <section className="glass-card">
-            <h2 className="sidebar-title">
-              <Plus size={20} style={{ color: 'var(--accent)' }} />
-              新規商品を登録
-            </h2>
-            
-            <form onSubmit={handleAddItem}>
-              <div className="form-group">
-                <label>商品名</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  placeholder="例: オリジナルブレンドコーヒー" 
-                  value={newItemName}
-                  onChange={e => setNewItemName(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-grid-2">
+          {/* 新規商品登録カード (本部管理者のみ表示) */}
+          {adminRole === 'admin' ? (
+            <section className="glass-card">
+              <h2 className="sidebar-title">
+                <Plus size={20} style={{ color: 'var(--accent)' }} />
+                新規商品を登録
+              </h2>
+              
+              <form onSubmit={handleAddItem}>
                 <div className="form-group">
-                  <label>初期在庫数</label>
+                  <label>商品名</label>
+                  <input 
+                    type="text" 
+                    className="form-input" 
+                    placeholder="例: オリジナルブレンドコーヒー" 
+                    value={newItemName}
+                    onChange={e => setNewItemName(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="form-grid-2">
+                  <div className="form-group">
+                    <label>初期在庫数</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      className="form-input" 
+                      value={newItemStock}
+                      onChange={e => setNewItemStock(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>単位</label>
+                    <select 
+                      className="form-input" 
+                      value={newItemUnit}
+                      onChange={e => setNewItemUnit(e.target.value)}
+                      required
+                    >
+                      <option value="個">個</option>
+                      <option value="箱">箱</option>
+                      <option value="袋">袋</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>単価 (円)</label>
                   <input 
                     type="number" 
                     min="0"
                     className="form-input" 
-                    value={newItemStock}
-                    onChange={e => setNewItemStock(e.target.value)}
+                    value={newItemPrice}
+                    onChange={e => setNewItemPrice(e.target.value)}
                     required
                   />
                 </div>
-                <div className="form-group">
-                  <label>単位</label>
-                  <select 
-                    className="form-input" 
-                    value={newItemUnit}
-                    onChange={e => setNewItemUnit(e.target.value)}
-                    required
-                  >
-                    <option value="個">個</option>
-                    <option value="箱">箱</option>
-                    <option value="袋">袋</option>
-                  </select>
-                </div>
-              </div>
 
-              <div className="form-group">
-                <label>単価 (円)</label>
-                <input 
-                  type="number" 
-                  min="0"
-                  className="form-input" 
-                  value={newItemPrice}
-                  onChange={e => setNewItemPrice(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="form-grid-2">
-                <div className="form-group">
-                  <label>不足しきい値</label>
-                  <input 
-                    type="number" 
-                    min="0"
-                    className="form-input" 
-                    value={newItemLow}
-                    onChange={e => setNewItemLow(e.target.value)}
-                    required
-                  />
+                <div className="form-grid-2">
+                  <div className="form-group">
+                    <label>不足しきい値</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      className="form-input" 
+                      value={newItemLow}
+                      onChange={e => setNewItemLow(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>過剰しきい値</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      className="form-input" 
+                      value={newItemHigh}
+                      onChange={e => setNewItemHigh(e.target.value)}
+                      required
+                    />
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label>過剰しきい値</label>
-                  <input 
-                    type="number" 
-                    min="0"
-                    className="form-input" 
-                    value={newItemHigh}
-                    onChange={e => setNewItemHigh(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
 
-              <button type="submit" className="btn btn-submit">
-                商品を登録する
-              </button>
-            </form>
-          </section>
+                <button type="submit" className="btn btn-submit">
+                  商品を登録する
+                </button>
+              </form>
+            </section>
+          ) : (
+            <section className="glass-card" style={{ borderLeft: '5px solid var(--accent)' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', display: 'block', marginBottom: '0.5rem' }}>
+                🏪 在庫管理モード
+              </span>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                現在、店舗スタッフ用画面でログインしています。
+              </p>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.4', marginTop: '0.4rem' }}>
+                商品の「出庫（1個売る）」および「補充」のみ可能です。商品の新規登録や編集・削除は本部管理者が行います。
+              </p>
+            </section>
+          )}
 
           {/* クイックガイド */}
           <section className="glass-card">
