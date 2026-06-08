@@ -18,7 +18,10 @@ import {
   Save,
   LogOut,
   Store,
-  CheckCircle2
+  CheckCircle2,
+  Calendar,
+  FileText,
+  TrendingUp
 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 
@@ -33,6 +36,17 @@ interface Item {
   shop_id: string;
   created_at: string;
 }
+
+interface RestockHistory {
+  id: string;
+  item_id: string;
+  item_name: string;
+  quantity: number;
+  price: number;
+  shop_id: string;
+  created_at: string;
+}
+
 
 // 店舗別のデフォルト初期データ定義
 const DEFAULT_INITIAL_ITEMS: Item[] = [
@@ -109,6 +123,14 @@ export default function Home() {
   const [toasts, setToasts] = useState<{ id: number; text: string; type: 'success' | 'error' | 'info' }[]>([]);
   const [currentShopEmail, setCurrentShopEmail] = useState('');
   const [adminRole, setAdminRole] = useState('store');
+
+  // 補充履歴用ステート
+  const [restockHistory, setRestockHistory] = useState<RestockHistory[]>([]);
+  // アクティブタブステート ('inventory' | 'report')
+  const [activeTab, setActiveTab] = useState<'inventory' | 'report'>('inventory');
+  // レポート表示用の選択された年月 (例: '2026-06')
+  const [selectedMonth, setSelectedMonth] = useState('');
+
 
   // 新規登録フォーム用
   const [newItemName, setNewItemName] = useState('');
@@ -235,6 +257,93 @@ export default function Home() {
     setLoading(false);
   };
 
+  // 特定店舗の補充履歴のロード
+  const loadShopRestockHistory = async (shopEmail: string, configured: boolean) => {
+    if (!shopEmail) return;
+
+    if (configured) {
+      try {
+        const { data, error } = await supabase
+          .from('restock_history')
+          .select('*')
+          .eq('shop_id', shopEmail)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        setRestockHistory(data || []);
+      } catch (error: any) {
+        console.error('補充履歴ロード失敗:', error.message);
+        setRestockHistory([]);
+      }
+    } else {
+      // ローカルストレージからロード
+      const localHistory = localStorage.getItem('restock_history');
+      if (localHistory) {
+        try {
+          const allHistory: RestockHistory[] = JSON.parse(localHistory);
+          const shopHistory = allHistory.filter(h => h.shop_id === shopEmail);
+          setRestockHistory(shopHistory.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
+        } catch (e) {
+          setRestockHistory([]);
+        }
+      } else {
+        setRestockHistory([]);
+      }
+    }
+  };
+
+  // 補充履歴の記録
+  const addRestockLog = async (itemId: string, itemName: string, quantity: number, price: number, shopEmail: string, configured: boolean) => {
+    if (quantity <= 0) return;
+
+    const newLogPayload = {
+      item_id: itemId,
+      item_name: itemName,
+      quantity,
+      price,
+      shop_id: shopEmail,
+    };
+
+    if (configured) {
+      try {
+        const { data, error } = await supabase
+          .from('restock_history')
+          .insert([newLogPayload])
+          .select();
+
+        if (error) throw error;
+        if (data && data[0]) {
+          setRestockHistory(prev => [data[0], ...prev]);
+        }
+      } catch (error: any) {
+        console.error('補充履歴の保存に失敗しました:', error.message);
+      }
+    } else {
+      const createdLog: RestockHistory = {
+        id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        ...newLogPayload,
+        created_at: new Date().toISOString()
+      };
+
+      const localHistory = localStorage.getItem('restock_history');
+      let allHistory: RestockHistory[] = [];
+      if (localHistory) {
+        try {
+          allHistory = JSON.parse(localHistory);
+        } catch (e) {
+          allHistory = [];
+        }
+      }
+
+      const updatedHistory = [createdLog, ...allHistory];
+      localStorage.setItem('restock_history', JSON.stringify(updatedHistory));
+      
+      // 画面上のステートも更新（現在の店舗分のみ）
+      setRestockHistory(prev => [createdLog, ...prev]);
+    }
+  };
+
+
   // セッションチェックと初期初期化
   useEffect(() => {
     async function initPage() {
@@ -297,8 +406,10 @@ export default function Home() {
   useEffect(() => {
     if (currentShopEmail) {
       loadShopItems(currentShopEmail, usingSupabase);
+      loadShopRestockHistory(currentShopEmail, usingSupabase);
     }
   }, [currentShopEmail, usingSupabase]);
+
 
   // 全体データのうち、現在の店舗以外のデータを崩さずにローカル状態および保存用を同期する
   const syncItemsState = (shopUpdatedItems: Item[]) => {
@@ -352,6 +463,7 @@ export default function Home() {
 
     const updated = items.map(i => i.id === item.id ? { ...i, stock: newStock } : i);
     syncItemsState(updated);
+    addRestockLog(item.id, item.name, 1, item.price, currentShopEmail, usingSupabase);
 
     if (usingSupabase) {
       try {
@@ -368,6 +480,7 @@ export default function Home() {
       addToast(`${item.name}を1個補充しました`, 'success');
     }
   };
+
 
   // 新規商品の追加
   const handleAddItem = async (e: React.FormEvent) => {
@@ -403,6 +516,9 @@ export default function Home() {
 
         if (data && data[0]) {
           syncItemsState([...items, data[0]]);
+          if (stock > 0) {
+            addRestockLog(data[0].id, data[0].name, stock, price, currentShopEmail, usingSupabase);
+          }
           addToast(`商品「${data[0].name}」を追加しました`, 'success');
         }
       } catch (error: any) {
@@ -415,8 +531,12 @@ export default function Home() {
         created_at: new Date().toISOString()
       };
       syncItemsState([...items, created]);
+      if (stock > 0) {
+        addRestockLog(created.id, created.name, stock, price, currentShopEmail, usingSupabase);
+      }
       addToast(`商品「${created.name}」を追加しました（ローカル）`, 'success');
     }
+
 
     setNewItemName('');
     setNewItemStock('10');
@@ -449,6 +569,11 @@ export default function Home() {
     const low = parseInt(editLow) || 0;
     const high = parseInt(editHigh) || 0;
 
+    // 編集前の商品データを取得して、在庫増の場合は補充履歴を記録
+    const originalItem = items.find(i => i.id === id);
+    const oldStock = originalItem ? originalItem.stock : 0;
+    const restockQty = stock - oldStock;
+
     const updatedItem = {
       name: editName.trim(),
       price,
@@ -461,6 +586,11 @@ export default function Home() {
 
     const updated = items.map(i => i.id === id ? { ...i, ...updatedItem } : i);
     syncItemsState(updated);
+
+    if (restockQty > 0) {
+      addRestockLog(id, updatedItem.name, restockQty, price, currentShopEmail, usingSupabase);
+    }
+
 
     if (usingSupabase) {
       try {
@@ -510,11 +640,70 @@ export default function Home() {
     router.push('/login');
   };
 
+  // 履歴から存在する年月（YYYY-MM）を抽出して降順ソート
+  const availableMonths = Array.from(
+    new Set(
+      restockHistory.map(log => {
+        const date = new Date(log.created_at);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        return `${yyyy}-${mm}`;
+      })
+    )
+  ).sort((a, b) => b.localeCompare(a));
+
+  // デフォルトで最新の月を選択する
+  useEffect(() => {
+    if (availableMonths.length > 0 && !selectedMonth) {
+      setSelectedMonth(availableMonths[0]);
+    }
+  }, [availableMonths, selectedMonth]);
+
+  // 選択された月の補充履歴を抽出
+  const filteredHistory = restockHistory.filter(log => {
+    const date = new Date(log.created_at);
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    return `${yyyy}-${mm}` === selectedMonth;
+  });
+
+  // 選択された月の商品別集計
+  interface ProductSummary {
+    itemName: string;
+    quantity: number;
+    price: number;
+    total: number;
+  }
+  
+  const productSummaries: { [key: string]: ProductSummary } = {};
+  let totalRestockAmount = 0;
+  let totalRestockQuantity = 0;
+
+  filteredHistory.forEach(log => {
+    const key = `${log.item_name}-${log.price}`; // 商品名と単価で集計
+    const itemTotal = log.quantity * log.price;
+    totalRestockAmount += itemTotal;
+    totalRestockQuantity += log.quantity;
+
+    if (productSummaries[key]) {
+      productSummaries[key].quantity += log.quantity;
+      productSummaries[key].total += itemTotal;
+    } else {
+      productSummaries[key] = {
+        itemName: log.item_name,
+        quantity: log.quantity,
+        price: log.price,
+        total: itemTotal,
+      };
+    }
+  });
+
   // 集計計算
   const totalValue = items.reduce((sum, item) => sum + (item.stock * item.price), 0);
   const totalStockCount = items.reduce((sum, item) => sum + item.stock, 0);
   const lowCount = items.filter(item => getStatus(item.stock, item.threshold_low, item.threshold_high) === 'low').length;
   const highCount = items.filter(item => getStatus(item.stock, item.threshold_low, item.threshold_high) === 'high').length;
+
 
   return (
     <div className="app-container animate-fade-in">
@@ -640,206 +829,357 @@ export default function Home() {
 
       {/* メイングリッド */}
       <main className="dashboard-grid">
-        {/* 左側：在庫リスト */}
+        {/* 左側：在庫リスト または レポート */}
         <section className="glass-card">
-          <div className="list-section-header">
-            <h2>
-              <Package size={20} />
-              商品在庫状況一覧
-            </h2>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              全 {items.length} 品目 (総在庫数: {totalStockCount}点)
-            </span>
+          {/* タブヘッダー */}
+          <div className="tab-container">
+            <button 
+              className={`tab-button ${activeTab === 'inventory' ? 'active' : ''}`}
+              onClick={() => setActiveTab('inventory')}
+            >
+              <Package size={16} />
+              商品在庫一覧
+            </button>
+            <button 
+              className={`tab-button ${activeTab === 'report' ? 'active' : ''}`}
+              onClick={() => setActiveTab('report')}
+            >
+              <TrendingUp size={16} />
+              月別補充レポート
+            </button>
           </div>
 
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
-              読み込み中...
-            </div>
-          ) : items.length === 0 ? (
-            <div className="empty-state">
-              <Package className="empty-state-icon" />
-              <p>登録されている商品がありません。</p>
-              <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>右側のフォームから商品を追加してください。</p>
-            </div>
+          {activeTab === 'inventory' ? (
+            <>
+              <div className="list-section-header">
+                <h2>在庫状況一覧</h2>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                  全 {items.length} 品目 (総在庫数: {totalStockCount}点)
+                </span>
+              </div>
+
+              {loading ? (
+                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+                  読み込み中...
+                </div>
+              ) : items.length === 0 ? (
+                <div className="empty-state">
+                  <Package className="empty-state-icon" />
+                  <p>登録されている商品がありません。</p>
+                  <p style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>右側のフォームから商品を追加してください。</p>
+                </div>
+              ) : (
+                <div className="items-list">
+                  {items.map(item => {
+                    const isEditing = editingItemId === item.id;
+                    const status = getStatus(item.stock, item.threshold_low, item.threshold_high);
+
+                    if (isEditing) {
+                      return (
+                        <div key={item.id} className="edit-form-overlay animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--accent)' }}>商品を編集</span>
+                            <button onClick={() => setEditingItemId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                              <X size={18} />
+                            </button>
+                          </div>
+
+                          <div className="form-group">
+                            <label>商品名</label>
+                            <input 
+                              type="text" 
+                              className="form-input" 
+                              value={editName}
+                              onChange={e => setEditName(e.target.value)}
+                            />
+                          </div>
+
+                          <div className="form-grid-2">
+                            <div className="form-group">
+                              <label>在庫数</label>
+                              <input 
+                                type="number" 
+                                className="form-input" 
+                                value={editStock}
+                                onChange={e => setEditStock(e.target.value)}
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label>単位</label>
+                              <select 
+                                className="form-input" 
+                                value={editUnit}
+                                onChange={e => setEditUnit(e.target.value)}
+                              >
+                                <option value="個">個</option>
+                                <option value="箱">箱</option>
+                                <option value="袋">袋</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="form-group">
+                            <label>単価 (円)</label>
+                            <input 
+                              type="number" 
+                              className="form-input" 
+                              value={editPrice}
+                              onChange={e => setEditPrice(e.target.value)}
+                            />
+                          </div>
+
+                          <div className="form-grid-2">
+                            <div className="form-group">
+                              <label>不足しきい値</label>
+                              <input 
+                                type="number" 
+                                className="form-input" 
+                                value={editLow}
+                                onChange={e => setEditLow(e.target.value)}
+                              />
+                            </div>
+                            <div className="form-group">
+                              <label>過剰しきい値</label>
+                              <input 
+                                type="number" 
+                                className="form-input" 
+                                value={editHigh}
+                                onChange={e => setEditHigh(e.target.value)}
+                              />
+                            </div>
+                          </div>
+
+                          <button 
+                            onClick={() => handleSaveEdit(item.id)} 
+                            className="btn btn-submit" 
+                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+                          >
+                            <Save size={16} />
+                            変更を保存する
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={item.id} className={`item-card status-${status}`}>
+                        {/* 商品基本情報 */}
+                        <div className="item-info">
+                          <div className="item-title">{item.name}</div>
+                          <div className="item-meta">
+                            {status !== 'normal' && (
+                              <span className={`badge ${status}`}>
+                                {status === 'low' && '⚠️ 不足 (要発注)'}
+                                {status === 'high' && '📦 過剰'}
+                              </span>
+                            )}
+                            <span>単価: ¥{item.price.toLocaleString()}</span>
+                          </div>
+                        </div>
+
+                        {/* 在庫数と合計金額 */}
+                        <div className="item-numbers">
+                          <div className="num-box">
+                            <span className="num-label">在庫数</span>
+                            <span className="num-value" style={{ 
+                              color: status === 'low' ? 'var(--color-low)' : status === 'high' ? 'var(--color-high)' : 'var(--text-primary)'
+                            }}>
+                              {item.stock} {item.unit || '個'}
+                            </span>
+                          </div>
+                          <div className="num-box">
+                            <span className="num-label">合計金額</span>
+                            <span className="num-value" style={{ fontWeight: 600 }}>
+                              ¥{(item.stock * item.price).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 操作アクション */}
+                        <div className="action-buttons">
+                          <button 
+                            className="btn btn-sell" 
+                            onClick={() => handleSell(item)}
+                            disabled={item.stock <= 0}
+                            title="在庫を1つ減らします"
+                          >
+                            <Minus size={15} />
+                            1個売る
+                          </button>
+                          <button 
+                            className="btn btn-restock" 
+                            onClick={() => handleRestock(item)}
+                            title="在庫を1つ増やします"
+                          >
+                            <Plus size={15} />
+                            補充する
+                          </button>
+                          {adminRole === 'admin' && (
+                            <>
+                              <button 
+                                onClick={() => startEditing(item)} 
+                                className="btn-edit"
+                                style={{ marginLeft: '0.4rem' }}
+                                title="商品情報を編集します"
+                              >
+                                <Edit2 size={15} />
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteItem(item.id, item.name)}
+                                style={{ 
+                                  background: 'transparent', 
+                                  border: 'none', 
+                                  color: 'var(--text-muted)', 
+                                  cursor: 'pointer',
+                                  padding: '0.5rem'
+                                }}
+                                title="商品を削除します"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           ) : (
-            <div className="items-list">
-              {items.map(item => {
-                const isEditing = editingItemId === item.id;
-                const status = getStatus(item.stock, item.threshold_low, item.threshold_high);
+            /* 月別補充レポート表示 */
+            <div className="animate-fade-in">
+              <div className="month-selector-container">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Calendar size={18} style={{ color: 'var(--accent)' }} />
+                  <span style={{ fontSize: '0.95rem', fontWeight: 600 }}>集計対象月の選択</span>
+                </div>
+                <div>
+                  {availableMonths.length === 0 ? (
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>補充データがありません</span>
+                  ) : (
+                    <select 
+                      className="form-input" 
+                      value={selectedMonth} 
+                      onChange={e => setSelectedMonth(e.target.value)}
+                      style={{ cursor: 'pointer', minWidth: '150px', background: 'rgba(15, 23, 42, 0.8)' }}
+                    >
+                      {availableMonths.map(m => {
+                        const [year, month] = m.split('-');
+                        return (
+                          <option key={m} value={m}>
+                            {year}年{month}月
+                          </option>
+                        );
+                      })}
+                    </select>
+                  )}
+                </div>
+              </div>
 
-                if (isEditing) {
-                  return (
-                    <div key={item.id} className="edit-form-overlay animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--accent)' }}>商品を編集</span>
-                        <button onClick={() => setEditingItemId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                          <X size={18} />
-                        </button>
+              {filteredHistory.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '4rem 2rem', color: 'var(--text-secondary)' }}>
+                  <FileText size={40} style={{ opacity: 0.3, marginBottom: '1rem' }} />
+                  <p>選択した月の補充（発注）実績はありません。</p>
+                </div>
+              ) : (
+                <>
+                  {/* レポートサマリー */}
+                  <div className="report-summary-grid">
+                    <div className="report-summary-card accent">
+                      <div className="report-summary-icon">
+                        <DollarSign size={18} />
                       </div>
-
-                      <div className="form-group">
-                        <label>商品名</label>
-                        <input 
-                          type="text" 
-                          className="form-input" 
-                          value={editName}
-                          onChange={e => setEditName(e.target.value)}
-                        />
-                      </div>
-
-                      <div className="form-grid-2">
-                        <div className="form-group">
-                          <label>在庫数</label>
-                          <input 
-                            type="number" 
-                            className="form-input" 
-                            value={editStock}
-                            onChange={e => setEditStock(e.target.value)}
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>単位</label>
-                          <select 
-                            className="form-input" 
-                            value={editUnit}
-                            onChange={e => setEditUnit(e.target.value)}
-                          >
-                            <option value="個">個</option>
-                            <option value="箱">箱</option>
-                            <option value="袋">袋</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="form-group">
-                        <label>単価 (円)</label>
-                        <input 
-                          type="number" 
-                          className="form-input" 
-                          value={editPrice}
-                          onChange={e => setEditPrice(e.target.value)}
-                        />
-                      </div>
-
-                      <div className="form-grid-2">
-                        <div className="form-group">
-                          <label>不足しきい値</label>
-                          <input 
-                            type="number" 
-                            className="form-input" 
-                            value={editLow}
-                            onChange={e => setEditLow(e.target.value)}
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>過剰しきい値</label>
-                          <input 
-                            type="number" 
-                            className="form-input" 
-                            value={editHigh}
-                            onChange={e => setEditHigh(e.target.value)}
-                          />
-                        </div>
-                      </div>
-
-                      <button 
-                        onClick={() => handleSaveEdit(item.id)} 
-                        className="btn btn-submit" 
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
-                      >
-                        <Save size={16} />
-                        変更を保存する
-                      </button>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div key={item.id} className={`item-card status-${status}`}>
-                    {/* 商品基本情報 */}
-                    <div className="item-info">
-                      <div className="item-title">{item.name}</div>
-                      <div className="item-meta">
-                        {status !== 'normal' && (
-                          <span className={`badge ${status}`}>
-                            {status === 'low' && '⚠️ 不足 (要発注)'}
-                            {status === 'high' && '📦 過剰'}
-                          </span>
-                        )}
-                        <span>単価: ¥{item.price.toLocaleString()}</span>
-                      </div>
-                    </div>
-
-                    {/* 在庫数と合計金額 */}
-                    <div className="item-numbers">
-                      <div className="num-box">
-                        <span className="num-label">在庫数</span>
-                        <span className="num-value" style={{ 
-                          color: status === 'low' ? 'var(--color-low)' : status === 'high' ? 'var(--color-high)' : 'var(--text-primary)'
-                        }}>
-                          {item.stock} {item.unit || '個'}
-                        </span>
-                      </div>
-                      <div className="num-box">
-                        <span className="num-label">合計金額</span>
-                        <span className="num-value" style={{ fontWeight: 600 }}>
-                          ¥{(item.stock * item.price).toLocaleString()}
+                      <div className="summary-info">
+                        <span className="summary-label">補充総額</span>
+                        <span className="summary-value" style={{ color: 'var(--text-primary)' }}>
+                          ¥{totalRestockAmount.toLocaleString()}
                         </span>
                       </div>
                     </div>
-
-                    {/* 操作アクション */}
-                    <div className="action-buttons">
-                      <button 
-                        className="btn btn-sell" 
-                        onClick={() => handleSell(item)}
-                        disabled={item.stock <= 0}
-                        title="在庫を1つ減らします"
-                      >
-                        <Minus size={15} />
-                        1個売る
-                      </button>
-                      <button 
-                        className="btn btn-restock" 
-                        onClick={() => handleRestock(item)}
-                        title="在庫を1つ増やします"
-                      >
-                        <Plus size={15} />
-                        補充する
-                      </button>
-                      {adminRole === 'admin' && (
-                        <>
-                          <button 
-                            onClick={() => startEditing(item)} 
-                            className="btn-edit"
-                            style={{ marginLeft: '0.4rem' }}
-                            title="商品情報を編集します"
-                          >
-                            <Edit2 size={15} />
-                          </button>
-                          <button 
-                            onClick={() => handleDeleteItem(item.id, item.name)}
-                            style={{ 
-                              background: 'transparent', 
-                              border: 'none', 
-                              color: 'var(--text-muted)', 
-                              cursor: 'pointer',
-                              padding: '0.5rem'
-                            }}
-                            title="商品を削除します"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </>
-                      )}
+                    <div className="report-summary-card">
+                      <div className="report-summary-icon">
+                        <Package size={18} />
+                      </div>
+                      <div className="summary-info">
+                        <span className="summary-label">補充総数量</span>
+                        <span className="summary-value">
+                          {totalRestockQuantity} 点
+                        </span>
+                      </div>
+                    </div>
+                    <div className="report-summary-card">
+                      <div className="report-summary-icon">
+                        <FileText size={18} />
+                      </div>
+                      <div className="summary-info">
+                        <span className="summary-label">補充品目数</span>
+                        <span className="summary-value">
+                          {Object.keys(productSummaries).length} 品目
+                        </span>
+                      </div>
                     </div>
                   </div>
-                );
-              })}
+
+                  {/* 品目別集計表 */}
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Package size={16} style={{ color: 'var(--accent)' }} />
+                    商品別補充実績
+                  </h3>
+                  <div className="report-table-wrapper">
+                    <table className="report-table">
+                      <thead>
+                        <tr>
+                          <th>商品名</th>
+                          <th style={{ textAlign: 'right' }}>補充時単価</th>
+                          <th style={{ textAlign: 'right' }}>補充数量</th>
+                          <th style={{ textAlign: 'right' }}>合計金額</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.values(productSummaries).map((summary) => (
+                          <tr key={`${summary.itemName}-${summary.price}`}>
+                            <td style={{ fontWeight: 600 }}>{summary.itemName}</td>
+                            <td style={{ textAlign: 'right' }}>¥{summary.price.toLocaleString()}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{summary.quantity}</td>
+                            <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 600 }}>
+                              ¥{summary.total.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* 詳細ログ（タイムライン） */}
+                  <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <Calendar size={16} style={{ color: 'var(--accent)' }} />
+                    補充詳細ログ（タイムライン）
+                  </h3>
+                  <div className="timeline-container">
+                    {filteredHistory.map((log) => {
+                      const logDate = new Date(log.created_at);
+                      const formattedDate = `${logDate.getMonth() + 1}/${logDate.getDate()} ${String(logDate.getHours()).padStart(2, '0')}:${String(logDate.getMinutes()).padStart(2, '0')}`;
+                      return (
+                        <div key={log.id} className="timeline-item">
+                          <div className="timeline-date">{formattedDate}</div>
+                          <div className="timeline-content">
+                            商品 <span className="timeline-highlight">「{log.item_name}」</span> を 
+                            <span className="timeline-badge" style={{ marginLeft: '0.4rem', marginRight: '0.4rem' }}>
+                              {log.quantity} 個
+                            </span> 
+                            補充しました (単価: ¥{log.price.toLocaleString()})
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </section>
+
 
         {/* 右側サイドバー (新規商品登録 ＆ ガイド) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>

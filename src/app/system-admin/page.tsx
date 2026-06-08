@@ -45,6 +45,17 @@ interface Item {
   created_at: string;
 }
 
+interface RestockHistory {
+  id: string;
+  item_id: string;
+  item_name: string;
+  quantity: number;
+  price: number;
+  shop_id: string;
+  created_at: string;
+}
+
+
 const DEFAULT_STARTER_ITEMS = [
   { name: 'ベーシックコーヒー豆', stock: 15, price: 1000, threshold_low: 5, threshold_high: 30, unit: '袋' },
   { name: 'ペーパーフィルター 100枚入', stock: 20, price: 450, threshold_low: 8, threshold_high: 40, unit: '箱' },
@@ -178,7 +189,52 @@ export default function SystemAdmin() {
     initPage();
   }, [router]);
 
+  // 補充履歴の記録（本部管理者画面用）
+  const addRestockLog = async (itemId: string, itemName: string, quantity: number, price: number, shopEmail: string, configured: boolean) => {
+    if (quantity <= 0) return;
+
+    const newLogPayload = {
+      item_id: itemId,
+      item_name: itemName,
+      quantity,
+      price,
+      shop_id: shopEmail,
+    };
+
+    if (configured) {
+      try {
+        const { error } = await supabase
+          .from('restock_history')
+          .insert([newLogPayload]);
+
+        if (error) throw error;
+      } catch (error: any) {
+        console.error('補充履歴の保存に失敗しました:', error.message);
+      }
+    } else {
+      const createdLog: RestockHistory = {
+        id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        ...newLogPayload,
+        created_at: new Date().toISOString()
+      };
+
+      const localHistory = localStorage.getItem('restock_history');
+      let allHistory: RestockHistory[] = [];
+      if (localHistory) {
+        try {
+          allHistory = JSON.parse(localHistory);
+        } catch (e) {
+          allHistory = [];
+        }
+      }
+
+      const updatedHistory = [createdLog, ...allHistory];
+      localStorage.setItem('restock_history', JSON.stringify(updatedHistory));
+    }
+  };
+
   // パスワード表示トグル
+
   const togglePasswordVisibility = (shopId: string) => {
     setVisiblePasswords(prev => ({
       ...prev,
@@ -459,6 +515,9 @@ export default function SystemAdmin() {
 
         if (data && data[0]) {
           setItems(prev => [...prev, data[0]]);
+          if (stock > 0) {
+            addRestockLog(data[0].id, data[0].name, stock, price, shopEmail, usingSupabase);
+          }
           addToast(`商品「${data[0].name}」を追加しました`, 'success');
         }
       } catch (err: any) {
@@ -483,9 +542,13 @@ export default function SystemAdmin() {
       const updated = [...allItems, created];
       localStorage.setItem('inventory_items', JSON.stringify(updated));
       setItems(updated);
+      if (stock > 0) {
+        addRestockLog(created.id, created.name, stock, price, shopEmail, usingSupabase);
+      }
       addToast(`商品「${created.name}」を追加しました（ローカル）`, 'success');
       setAddingItem(false);
     }
+
 
     // フォームクリア
     setNewItemName('');
@@ -520,6 +583,11 @@ export default function SystemAdmin() {
     const low = parseInt(editItemLow) || 0;
     const high = parseInt(editItemHigh) || 0;
 
+    // 編集前の商品データを取得して、在庫増の場合は補充履歴を記録
+    const originalItem = items.find(i => i.id === id);
+    const oldStock = originalItem ? originalItem.stock : 0;
+    const restockQty = stock - oldStock;
+
     const updatedItem = {
       name: editItemName.trim(),
       price,
@@ -540,6 +608,9 @@ export default function SystemAdmin() {
         if (error) throw error;
 
         setItems(prev => prev.map(i => i.id === id ? { ...i, ...updatedItem } : i));
+        if (restockQty > 0) {
+          addRestockLog(id, updatedItem.name, restockQty, price, shopEmail, usingSupabase);
+        }
         addToast('商品を更新しました', 'success');
       } catch (err: any) {
         addToast(`更新失敗: ${err.message}`, 'error');
@@ -555,11 +626,15 @@ export default function SystemAdmin() {
           const updated = allItems.map(i => i.id === id ? { ...i, ...updatedItem } : i);
           localStorage.setItem('inventory_items', JSON.stringify(updated));
           setItems(updated);
+          if (restockQty > 0) {
+            addRestockLog(id, updatedItem.name, restockQty, price, shopEmail, usingSupabase);
+          }
         } catch (e) {}
       }
       addToast('商品を更新しました（ローカル）', 'success');
       setUpdatingItem(false);
     }
+
 
     setEditingItemId(null);
   };
