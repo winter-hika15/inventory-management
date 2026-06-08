@@ -37,3 +37,8 @@ values
   ('店舗A', 'shopA@example.com', 'shopA123', 'store'),
   ('店舗B', 'shopB@example.com', 'shopB123', 'store');
 
+-- RLS (Row Level Security) の無効化 (開発・動作検証用としてクライアントからのアクセスを許可)
+alter table shops disable row level security;
+alter table items disable row level security;
+
+
