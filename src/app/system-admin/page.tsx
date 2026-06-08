@@ -76,6 +76,7 @@ export default function SystemAdmin() {
   // 編集用ステート
   const [editingShopId, setEditingShopId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
 
   // トースト通知
@@ -269,26 +270,49 @@ export default function SystemAdmin() {
   const startEditing = (shop: Shop) => {
     setEditingShopId(shop.id);
     setEditName(shop.name);
+    setEditEmail(shop.email);
     setEditPassword(shop.password || '');
   };
 
   // 店舗の編集保存
   const handleSaveEdit = async (shopId: string) => {
-    if (!editName.trim() || !editPassword.trim()) {
-      addToast('店舗名とパスワードを入力してください', 'error');
+    if (!editName.trim() || !editEmail.trim() || !editPassword.trim()) {
+      addToast('店舗名、メールアドレス、パスワードを入力してください', 'error');
       return;
     }
 
     const targetShop = shops.find(s => s.id === shopId);
     if (!targetShop) return;
 
+    const oldEmail = targetShop.email;
+    const newEmail = editEmail.trim();
+
+    // メールアドレスが変更された場合の重複チェック
+    if (newEmail.toLowerCase() !== oldEmail.toLowerCase() && 
+        shops.some(s => s.id !== shopId && s.email.toLowerCase() === newEmail.toLowerCase())) {
+      addToast('このメールアドレスは既に登録されています', 'error');
+      return;
+    }
+
     const updatedFields = {
       name: editName.trim(),
+      email: newEmail,
       password: editPassword.trim()
     };
 
     if (usingSupabase) {
       try {
+        // 1. メールアドレスが変更された場合、関連商品の shop_id も更新する
+        if (newEmail.toLowerCase() !== oldEmail.toLowerCase()) {
+          const { error: itemsError } = await supabase
+            .from('items')
+            .update({ shop_id: newEmail })
+            .eq('shop_id', oldEmail);
+
+          if (itemsError) throw itemsError;
+        }
+
+        // 2. 店舗情報の更新
         const { error } = await supabase
           .from('shops')
           .update(updatedFields)
@@ -297,14 +321,26 @@ export default function SystemAdmin() {
         if (error) throw error;
 
         setShops(prev => prev.map(s => s.id === shopId ? { ...s, ...updatedFields } : s));
+        setItems(prev => prev.map(item => item.shop_id === oldEmail ? { ...item, shop_id: newEmail } : item));
         addToast('店舗情報を更新しました', 'success');
       } catch (err: any) {
         addToast(`更新失敗: ${err.message}`, 'error');
       }
     } else {
+      // ローカルストレージ
       const updatedShops = shops.map(s => s.id === shopId ? { ...s, ...updatedFields } : s);
       localStorage.setItem('shops', JSON.stringify(updatedShops));
       setShops(updatedShops);
+
+      const localItems = localStorage.getItem('inventory_items');
+      if (localItems) {
+        try {
+          const allItems: Item[] = JSON.parse(localItems);
+          const updatedItems = allItems.map(item => item.shop_id === oldEmail ? { ...item, shop_id: newEmail } : item);
+          localStorage.setItem('inventory_items', JSON.stringify(updatedItems));
+          setItems(updatedItems);
+        } catch (e) {}
+      }
       addToast('店舗情報を更新しました（ローカル）', 'success');
     }
 
@@ -575,6 +611,16 @@ export default function SystemAdmin() {
                             className="form-input" 
                             value={editName}
                             onChange={e => setEditName(e.target.value)}
+                          />
+                        </div>
+
+                        <div className="form-group">
+                          <label>店舗メールアドレス (ログインID)</label>
+                          <input 
+                            type="email" 
+                            className="form-input" 
+                            value={editEmail}
+                            onChange={e => setEditEmail(e.target.value)}
                           />
                         </div>
 
