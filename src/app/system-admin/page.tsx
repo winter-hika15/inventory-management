@@ -65,6 +65,11 @@ export default function SystemAdmin() {
   const [newShopPassword, setNewShopPassword] = useState('');
   const [creating, setCreating] = useState(false);
 
+  // 本部管理者自身のアカウント設定用
+  const [adminEmailInput, setAdminEmailInput] = useState('');
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [updatingAdmin, setUpdatingAdmin] = useState(false);
+
   // パスワード表示トグル用
   const [visiblePasswords, setVisiblePasswords] = useState<{ [key: string]: boolean }>({});
 
@@ -140,6 +145,10 @@ export default function SystemAdmin() {
             setItems([]);
           }
         }
+      }
+      
+      if (localEmail) {
+        setAdminEmailInput(localEmail);
       }
       setLoading(false);
     }
@@ -363,6 +372,66 @@ export default function SystemAdmin() {
     localStorage.removeItem('admin_role');
     localStorage.removeItem('admin_name');
     router.push('/login');
+  };
+
+  // 本部管理者自身のアカウント設定変更
+  const handleUpdateAdminSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminEmailInput.trim()) {
+      addToast('メールアドレスを入力してください', 'error');
+      return;
+    }
+
+    setUpdatingAdmin(true);
+    const localEmail = localStorage.getItem('admin_email') || '';
+
+    const updatedFields: any = {
+      email: adminEmailInput.trim(),
+    };
+    if (adminPasswordInput.trim()) {
+      updatedFields.password = adminPasswordInput.trim();
+    }
+
+    if (usingSupabase) {
+      try {
+        const { error } = await supabase
+          .from('shops')
+          .update(updatedFields)
+          .eq('role', 'admin')
+          .eq('email', localEmail);
+
+        if (error) throw error;
+
+        localStorage.setItem('admin_email', adminEmailInput.trim());
+        addToast('本部管理者の設定を更新しました', 'success');
+        setAdminPasswordInput('');
+      } catch (err: any) {
+        addToast(`更新失敗: ${err.message}`, 'error');
+      } finally {
+        setUpdatingAdmin(false);
+      }
+    } else {
+      setTimeout(() => {
+        const localShops = localStorage.getItem('shops');
+        if (localShops) {
+          try {
+            const shopsList: Shop[] = JSON.parse(localShops);
+            const updatedList = shopsList.map(s => {
+              if (s.role === 'admin' && s.email === localEmail) {
+                return { ...s, ...updatedFields };
+              }
+              return s;
+            });
+            localStorage.setItem('shops', JSON.stringify(updatedList));
+            setShops(updatedList);
+            localStorage.setItem('admin_email', adminEmailInput.trim());
+            addToast('本部管理者の設定を更新しました（ローカル）', 'success');
+            setAdminPasswordInput('');
+          } catch (e) {}
+        }
+        setUpdatingAdmin(false);
+      }, 500);
+    }
   };
 
   // 集計データの計算
@@ -676,6 +745,47 @@ export default function SystemAdmin() {
                 </span>
                 店舗発行時に、よく使われる基本消耗品（コーヒー豆や紙カップ等）が初期在庫データとして自動的にセットされ、すぐに店舗運用デモが開始できます。
               </div>
+            </section>
+
+            {/* 本部管理者ログイン設定カード */}
+            <section className="glass-card">
+              <h2 className="sidebar-title">
+                <Key size={18} style={{ color: '#fbbf24' }} />
+                本部管理者ログイン設定
+              </h2>
+              
+              <form onSubmit={handleUpdateAdminSettings}>
+                <div className="form-group">
+                  <label>管理者メールアドレス</label>
+                  <input 
+                    type="email" 
+                    className="form-input" 
+                    value={adminEmailInput}
+                    onChange={e => setAdminEmailInput(e.target.value)}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>新規パスワード</label>
+                  <input 
+                    type="password" 
+                    className="form-input" 
+                    placeholder="変更する場合のみ入力" 
+                    value={adminPasswordInput}
+                    onChange={e => setAdminPasswordInput(e.target.value)}
+                  />
+                </div>
+
+                <button 
+                  type="submit" 
+                  className="btn" 
+                  style={{ width: '100%', background: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.3)' }}
+                  disabled={updatingAdmin}
+                >
+                  {updatingAdmin ? '設定保存中...' : '管理者設定を保存する'}
+                </button>
+              </form>
             </section>
 
           </main>
