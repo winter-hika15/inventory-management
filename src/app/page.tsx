@@ -95,7 +95,15 @@ const DEFAULT_INITIAL_ITEMS: Item[] = [
 
 export default function Home() {
   const router = useRouter();
+  interface Shop {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  }
+
   const [items, setItems] = useState<Item[]>([]);
+  const [shops, setShops] = useState<Shop[]>([]); // 店舗リスト用
   const [loading, setLoading] = useState(true);
   const [usingSupabase, setUsingSupabase] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; type: 'success' | 'error' | 'info' }[]>([]);
@@ -150,10 +158,86 @@ export default function Home() {
     });
   };
 
-  // セッションチェックとデータロード
+  // 特定店舗の商品データのロード
+  const loadShopItems = async (shopEmail: string, configured: boolean) => {
+    if (!shopEmail) return;
+    setLoading(true);
+
+    if (configured) {
+      try {
+        const { data, error } = await supabase
+          .from('items')
+          .select('*')
+          .eq('shop_id', shopEmail);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          setItems(sortItems(data));
+        } else {
+          // もしこの店舗のデータが1件もない場合、初期の店舗別サンプルデータを自動登録
+          const shopInitialItems = DEFAULT_INITIAL_ITEMS.filter(item => item.shop_id === shopEmail);
+          
+          if (shopInitialItems.length > 0) {
+            const { error: insertError } = await supabase
+              .from('items')
+              .insert(shopInitialItems.map(({ id, ...rest }) => rest)); // idは自動生成
+
+            if (insertError) throw insertError;
+
+            const { data: refetched } = await supabase
+              .from('items')
+              .select('*')
+              .eq('shop_id', shopEmail);
+            
+            if (refetched) {
+              setItems(sortItems(refetched));
+            }
+          } else {
+            setItems([]);
+          }
+        }
+        addToast(`店舗 ${shopEmail} のデータをロードしました`, 'success');
+      } catch (error: any) {
+        console.error('Supabaseロード失敗:', error.message);
+        addToast(`DB接続エラー: ${error.message}`, 'error');
+        setItems([]);
+      }
+    } else {
+      // ローカルストレージからロード
+      const localData = localStorage.getItem('inventory_items');
+      let allItems: Item[] = [];
+      if (localData) {
+        try {
+          allItems = JSON.parse(localData);
+        } catch (e) {
+          allItems = [];
+        }
+      }
+
+      // 選択中の店舗データのみに絞り込む
+      let shopItems = allItems.filter(item => item.shop_id === shopEmail);
+
+      // この店舗のデータが初めての場合、初期データをセット
+      if (shopItems.length === 0) {
+        const shopInitialItems = DEFAULT_INITIAL_ITEMS.filter(item => item.shop_id === shopEmail);
+        
+        if (shopInitialItems.length > 0) {
+          allItems = [...allItems, ...shopInitialItems];
+          localStorage.setItem('inventory_items', JSON.stringify(allItems));
+          shopItems = shopInitialItems;
+        }
+      }
+
+      setItems(sortItems(shopItems));
+      addToast(`店舗 ${shopEmail} (ローカル) のデータをロードしました`, 'info');
+    }
+    setLoading(false);
+  };
+
+  // セッションチェックと初期初期化
   useEffect(() => {
     async function initPage() {
-      setLoading(true);
       const configured = isSupabaseConfigured();
       setUsingSupabase(configured);
 
@@ -168,84 +252,53 @@ export default function Home() {
       }
 
       setAdminRole(localRole);
-      const shopEmail = localEmail;
-      setCurrentShopEmail(shopEmail);
 
-      if (configured) {
-        // Supabaseからデータ取得（shop_idが一致するものに絞り込み）
-        try {
-          const { data, error } = await supabase
-            .from('items')
-            .select('*')
-            .eq('shop_id', shopEmail);
+      let initialShopEmail = localEmail;
 
-          if (error) throw error;
-
-          if (data && data.length > 0) {
-            setItems(sortItems(data));
-          } else {
-            // もしこの店舗のデータが1件もない場合、初期の店舗別サンプルデータを自動登録
-            const shopInitialItems = DEFAULT_INITIAL_ITEMS.filter(item => item.shop_id === shopEmail);
-            
-            if (shopInitialItems.length > 0) {
-              const { error: insertError } = await supabase
-                .from('items')
-                .insert(shopInitialItems.map(({ id, ...rest }) => rest)); // idは自動生成
-
-              if (insertError) throw insertError;
-
-              const { data: refetched } = await supabase
-                .from('items')
-                .select('*')
-                .eq('shop_id', shopEmail);
-              
-              if (refetched) {
-                setItems(sortItems(refetched));
-              }
-            } else {
-              setItems([]);
-            }
-          }
-          addToast(`店舗 ${shopEmail} のデータをロードしました`, 'success');
-        } catch (error: any) {
-          console.error('Supabaseロード失敗:', error.message);
-          addToast(`DB接続エラー: ${error.message}`, 'error');
-        }
-      } else {
-        // ローカルストレージ動作
-        // ローカルストレージからロード
-        const localData = localStorage.getItem('inventory_items');
-        let allItems: Item[] = [];
-        if (localData) {
+      // 本部管理者の場合、店舗リストを読み込んで最初の店舗を初期表示にする
+      if (localRole === 'admin') {
+        let loadedShops: Shop[] = [];
+        if (configured) {
           try {
-            allItems = JSON.parse(localData);
+            const { data: shopsData } = await supabase
+              .from('shops')
+              .select('*')
+              .eq('role', 'store')
+              .order('name', { ascending: true });
+            loadedShops = shopsData || [];
           } catch (e) {
-            allItems = [];
+            console.error('店舗リストの取得失敗:', e);
+          }
+        } else {
+          const localShops = localStorage.getItem('shops');
+          if (localShops) {
+            try {
+              const parsedShops: Shop[] = JSON.parse(localShops);
+              loadedShops = parsedShops.filter(s => s.role === 'store');
+            } catch (e) {}
           }
         }
-
-        // ログイン中の店舗データのみに絞り込む
-        let shopItems = allItems.filter(item => item.shop_id === shopEmail);
-
-        // この店舗のデータが初めての場合、初期データをセット
-        if (shopItems.length === 0) {
-          const shopInitialItems = DEFAULT_INITIAL_ITEMS.filter(item => item.shop_id === shopEmail);
-          
-          if (shopInitialItems.length > 0) {
-            allItems = [...allItems, ...shopInitialItems];
-            localStorage.setItem('inventory_items', JSON.stringify(allItems));
-            shopItems = shopInitialItems;
-          }
+        setShops(loadedShops);
+        if (loadedShops.length > 0) {
+          initialShopEmail = loadedShops[0].email;
+        } else {
+          initialShopEmail = ''; // 店舗が1つもない場合
+          addToast('管理店舗がありません。本部管理画面で店舗を作成してください', 'info');
         }
-
-        setItems(sortItems(shopItems));
-        addToast(`店舗 ${shopEmail} (ローカル) のデータをロードしました`, 'info');
       }
-      setLoading(false);
+
+      setCurrentShopEmail(initialShopEmail);
     }
 
     initPage();
   }, [router]);
+
+  // 表示店舗の切り替え検知
+  useEffect(() => {
+    if (currentShopEmail) {
+      loadShopItems(currentShopEmail, usingSupabase);
+    }
+  }, [currentShopEmail, usingSupabase]);
 
   // 全体データのうち、現在の店舗以外のデータを崩さずにローカル状態および保存用を同期する
   const syncItemsState = (shopUpdatedItems: Item[]) => {
@@ -517,6 +570,37 @@ export default function Home() {
             <AlertCircle size={18} />
             現在ローカルストレージモードで動作しています。データをデータベースに保存するには、<code>.env.local</code> に Supabase の接続キーを設定してください。
           </span>
+        </div>
+      )}
+
+      {/* 本部管理者用の店舗切り替えセレクトボックス */}
+      {adminRole === 'admin' && (
+        <div className="glass-card" style={{ padding: '1.25rem', marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', borderLeft: '5px solid var(--accent)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <Store size={20} style={{ color: 'var(--accent)' }} />
+            <div>
+              <span style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)', display: 'block' }}>表示する店舗を切り替え</span>
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>本部は在庫を持たないため、選択した店舗の在庫画面として操作します。</span>
+            </div>
+          </div>
+          <div style={{ minWidth: '220px' }}>
+            {shops.length === 0 ? (
+              <span style={{ fontSize: '0.85rem', color: 'var(--color-low)' }}>管理中の店舗がありません</span>
+            ) : (
+              <select 
+                className="form-input" 
+                value={currentShopEmail} 
+                onChange={e => setCurrentShopEmail(e.target.value)}
+                style={{ cursor: 'pointer', fontWeight: 600, background: 'rgba(15, 23, 42, 0.8)' }}
+              >
+                {shops.map(shop => (
+                  <option key={shop.id} value={shop.email}>
+                    {shop.name} ({shop.email})
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
       )}
 
