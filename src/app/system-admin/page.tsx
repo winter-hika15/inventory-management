@@ -79,6 +79,28 @@ export default function SystemAdmin() {
   const [editEmail, setEditEmail] = useState('');
   const [editPassword, setEditPassword] = useState('');
 
+  // --- 商品管理モーダル用ステート ---
+  const [selectedShopForItems, setSelectedShopForItems] = useState<Shop | null>(null);
+
+  // 商品追加フォーム用のステート
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemStock, setNewItemStock] = useState('10');
+  const [newItemPrice, setNewItemPrice] = useState('1000');
+  const [newItemUnit, setNewItemUnit] = useState('個');
+  const [newItemLow, setNewItemLow] = useState('5');
+  const [newItemHigh, setNewItemHigh] = useState('20');
+  const [addingItem, setAddingItem] = useState(false);
+
+  // 商品編集用のステート
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editItemName, setEditItemName] = useState('');
+  const [editItemPrice, setEditItemPrice] = useState('0');
+  const [editItemStock, setEditItemStock] = useState('0');
+  const [editItemLow, setEditItemLow] = useState('0');
+  const [editItemHigh, setEditItemHigh] = useState('0');
+  const [editItemUnit, setEditItemUnit] = useState('個');
+  const [updatingItem, setUpdatingItem] = useState(false);
+
   // トースト通知
   const addToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = Date.now();
@@ -396,11 +418,180 @@ export default function SystemAdmin() {
           setItems(filteredItems);
         } catch (e) {}
       }
-
       addToast(`店舗「${shop.name}」と関連在庫データを削除しました（ローカル）`, 'info');
     }
   };
 
+  // --- 店舗別商品の追加・編集・削除アクション ---
+
+  // 特定店舗への商品追加
+  const handleAddProduct = async (e: React.FormEvent, shopEmail: string) => {
+    e.preventDefault();
+    if (!newItemName.trim()) {
+      addToast('商品名を入力してください', 'error');
+      return;
+    }
+
+    setAddingItem(true);
+    const price = parseInt(newItemPrice) || 0;
+    const stock = parseInt(newItemStock) || 0;
+    const low = parseInt(newItemLow) || 0;
+    const high = parseInt(newItemHigh) || 0;
+
+    const newItemPayload = {
+      name: newItemName.trim(),
+      stock,
+      price,
+      threshold_low: low,
+      threshold_high: high,
+      unit: newItemUnit,
+      shop_id: shopEmail,
+    };
+
+    if (usingSupabase) {
+      try {
+        const { data, error } = await supabase
+          .from('items')
+          .insert([newItemPayload])
+          .select();
+
+        if (error) throw error;
+
+        if (data && data[0]) {
+          setItems(prev => [...prev, data[0]]);
+          addToast(`商品「${data[0].name}」を追加しました`, 'success');
+        }
+      } catch (err: any) {
+        addToast(`追加失敗: ${err.message}`, 'error');
+      } finally {
+        setAddingItem(false);
+      }
+    } else {
+      // ローカルストレージ
+      const created: Item = {
+        id: `item-${Date.now()}`,
+        ...newItemPayload,
+        created_at: new Date().toISOString()
+      };
+      const localData = localStorage.getItem('inventory_items');
+      let allItems: Item[] = [];
+      if (localData) {
+        try {
+          allItems = JSON.parse(localData);
+        } catch (e) {}
+      }
+      const updated = [...allItems, created];
+      localStorage.setItem('inventory_items', JSON.stringify(updated));
+      setItems(updated);
+      addToast(`商品「${created.name}」を追加しました（ローカル）`, 'success');
+      setAddingItem(false);
+    }
+
+    // フォームクリア
+    setNewItemName('');
+    setNewItemStock('10');
+    setNewItemPrice('1000');
+    setNewItemUnit('個');
+    setNewItemLow('5');
+    setNewItemHigh('20');
+  };
+
+  // 商品編集の開始
+  const startEditingProduct = (item: Item) => {
+    setEditingItemId(item.id);
+    setEditItemName(item.name);
+    setEditItemPrice(item.price.toString());
+    setEditItemStock(item.stock.toString());
+    setEditItemLow(item.threshold_low.toString());
+    setEditItemHigh(item.threshold_high.toString());
+    setEditItemUnit(item.unit || '個');
+  };
+
+  // 商品編集の保存
+  const handleSaveProductEdit = async (id: string, shopEmail: string) => {
+    if (!editItemName.trim()) {
+      addToast('商品名を入力してください', 'error');
+      return;
+    }
+
+    setUpdatingItem(true);
+    const price = parseInt(editItemPrice) || 0;
+    const stock = parseInt(editItemStock) || 0;
+    const low = parseInt(editItemLow) || 0;
+    const high = parseInt(editItemHigh) || 0;
+
+    const updatedItem = {
+      name: editItemName.trim(),
+      price,
+      stock,
+      threshold_low: low,
+      threshold_high: high,
+      unit: editItemUnit,
+      shop_id: shopEmail
+    };
+
+    if (usingSupabase) {
+      try {
+        const { error } = await supabase
+          .from('items')
+          .update(updatedItem)
+          .eq('id', id);
+
+        if (error) throw error;
+
+        setItems(prev => prev.map(i => i.id === id ? { ...i, ...updatedItem } : i));
+        addToast('商品を更新しました', 'success');
+      } catch (err: any) {
+        addToast(`更新失敗: ${err.message}`, 'error');
+      } finally {
+        setUpdatingItem(false);
+      }
+    } else {
+      // ローカルストレージ
+      const localData = localStorage.getItem('inventory_items');
+      if (localData) {
+        try {
+          const allItems: Item[] = JSON.parse(localData);
+          const updated = allItems.map(i => i.id === id ? { ...i, ...updatedItem } : i);
+          localStorage.setItem('inventory_items', JSON.stringify(updated));
+          setItems(updated);
+        } catch (e) {}
+      }
+      addToast('商品を更新しました（ローカル）', 'success');
+      setUpdatingItem(false);
+    }
+
+    setEditingItemId(null);
+  };
+
+  // 商品の削除
+  const handleDeleteProduct = async (id: string, name: string) => {
+    if (!confirm(`商品「${name}」を削除してもよろしいですか？`)) return;
+
+    if (usingSupabase) {
+      try {
+        const { error } = await supabase.from('items').delete().eq('id', id);
+        if (error) throw error;
+        setItems(prev => prev.filter(i => i.id !== id));
+        addToast(`商品「${name}」を削除しました`, 'info');
+      } catch (err: any) {
+        addToast(`削除失敗: ${err.message}`, 'error');
+      }
+    } else {
+      // ローカルストレージ
+      const localData = localStorage.getItem('inventory_items');
+      if (localData) {
+        try {
+          const allItems: Item[] = JSON.parse(localData);
+          const filtered = allItems.filter(i => i.id !== id);
+          localStorage.setItem('inventory_items', JSON.stringify(filtered));
+          setItems(filtered);
+        } catch (e) {}
+      }
+      addToast(`商品「${name}」を削除しました（ローカル）`, 'info');
+    }
+  };
+ 
   // ログアウト
   const handleLogout = () => {
     localStorage.removeItem('admin_session');
@@ -703,8 +894,18 @@ export default function SystemAdmin() {
                       {/* アクションボタン */}
                       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                         <button 
+                          onClick={() => setSelectedShopForItems(shop)} 
+                          className="btn-nav"
+                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', borderColor: 'rgba(255,255,255,0.15)', color: 'white', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                          title="店舗の在庫商品を管理します"
+                        >
+                          <ShoppingBag size={14} />
+                          商品管理
+                        </button>
+                        <button 
                           onClick={() => startEditing(shop)} 
                           className="btn-edit"
+                          style={{ marginLeft: '0.5rem' }}
                           title="店舗のログイン設定を編集します"
                         >
                           <Edit2 size={16} />
@@ -836,6 +1037,170 @@ export default function SystemAdmin() {
 
           </main>
         </>
+      )}
+
+      {/* 店舗別商品管理モーダル */}
+      {selectedShopForItems && (
+        <div className="modal-overlay" onClick={() => setSelectedShopForItems(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '850px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '1rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.4rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--text-primary)' }}>
+                  <ShoppingBag size={22} style={{ color: 'var(--accent)' }} />
+                  {selectedShopForItems.name} の在庫商品管理
+                </h2>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>
+                  ログインID（メールアドレス）: <code>{selectedShopForItems.email}</code>
+                </p>
+              </div>
+              <button onClick={() => setSelectedShopForItems(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
+                
+                {/* 左側：商品リスト */}
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)' }}>登録済みの商品一覧</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '50vh', overflowY: 'auto', paddingRight: '0.5rem' }}>
+                    {items.filter(item => item.shop_id === selectedShopForItems.email).length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px dashed rgba(255,255,255,0.05)' }}>
+                        登録されている商品がありません。右側のフォームから追加してください。
+                      </div>
+                    ) : (
+                      items.filter(item => item.shop_id === selectedShopForItems.email).map(item => {
+                        const isEditing = editingItemId === item.id;
+                        if (isEditing) {
+                          return (
+                            <div key={item.id} style={{ background: 'rgba(30, 41, 59, 0.9)', border: '1px solid var(--accent)', padding: '1.25rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--accent)' }}>商品を編集</span>
+                              </div>
+
+                              <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                                <label style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>商品名</label>
+                                <input type="text" className="form-input" value={editItemName} onChange={e => setEditItemName(e.target.value)} style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} />
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                  <label style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>在庫数</label>
+                                  <input type="number" className="form-input" value={editItemStock} onChange={e => setEditItemStock(e.target.value)} style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} />
+                                </div>
+                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                  <label style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>単位</label>
+                                  <select className="form-input" value={editItemUnit} onChange={e => setEditItemUnit(e.target.value)} style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }}>
+                                    <option value="個">個</option>
+                                    <option value="箱">箱</option>
+                                    <option value="袋">袋</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                                <label style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>単価 (円)</label>
+                                <input type="number" className="form-input" value={editItemPrice} onChange={e => setEditItemPrice(e.target.value)} style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} />
+                              </div>
+
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                  <label style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>不足しきい値</label>
+                                  <input type="number" className="form-input" value={editItemLow} onChange={e => setEditItemLow(e.target.value)} style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} />
+                                </div>
+                                <div className="form-group" style={{ marginBottom: 0 }}>
+                                  <label style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>過剰しきい値</label>
+                                  <input type="number" className="form-input" value={editItemHigh} onChange={e => setEditItemHigh(e.target.value)} style={{ padding: '0.5rem 0.75rem', fontSize: '0.85rem' }} />
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                <button className="btn btn-submit" onClick={() => handleSaveProductEdit(item.id, selectedShopForItems.email)} disabled={updatingItem} style={{ flex: 1, padding: '0.5rem', fontSize: '0.85rem', marginTop: 0 }}>
+                                  保存
+                                </button>
+                                <button className="btn btn-cancel" onClick={() => setEditingItemId(null)} style={{ flex: 1, padding: '0.5rem', fontSize: '0.85rem' }}>
+                                  キャンセル
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)', transition: 'all 0.2s' }}>
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>{item.name}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', display: 'flex', gap: '0.8rem' }}>
+                                <span>在庫: <strong style={{ color: item.stock < item.threshold_low ? 'var(--color-low)' : 'var(--text-primary)' }}>{item.stock} {item.unit || '個'}</strong></span>
+                                <span>単価: ¥{item.price.toLocaleString()}</span>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.25rem' }}>
+                              <button className="btn-edit" onClick={() => startEditingProduct(item)} style={{ padding: '0.4rem' }} title="商品情報を編集する">
+                                <Edit2 size={14} />
+                              </button>
+                              <button onClick={() => handleDeleteProduct(item.id, item.name)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '0.4rem' }} title="商品を削除する">
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+
+                {/* 右側：新規追加フォーム */}
+                <div>
+                  <h3 style={{ fontSize: '1.05rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)' }}>新規商品を追加</h3>
+                  <form onSubmit={e => handleAddProduct(e, selectedShopForItems.email)} style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.05)', padding: '1.25rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>商品名</label>
+                      <input type="text" className="form-input" placeholder="例: エスプレッソカップ" value={newItemName} onChange={e => setNewItemName(e.target.value)} required />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>初期在庫数</label>
+                        <input type="number" min="0" className="form-input" value={newItemStock} onChange={e => setNewItemStock(e.target.value)} required />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>単位</label>
+                        <select className="form-input" value={newItemUnit} onChange={e => setNewItemUnit(e.target.value)}>
+                          <option value="個">個</option>
+                          <option value="箱">箱</option>
+                          <option value="袋">袋</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label>単価 (円)</label>
+                      <input type="number" min="0" className="form-input" value={newItemPrice} onChange={e => setNewItemPrice(e.target.value)} required />
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>不足しきい値</label>
+                        <input type="number" min="0" className="form-input" value={newItemLow} onChange={e => setNewItemLow(e.target.value)} required />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label>過剰しきい値</label>
+                        <input type="number" min="0" className="form-input" value={newItemHigh} onChange={e => setNewItemHigh(e.target.value)} required />
+                      </div>
+                    </div>
+
+                    <button type="submit" className="btn btn-submit" disabled={addingItem} style={{ marginTop: '0.5rem' }}>
+                      {addingItem ? '商品追加中...' : '商品を登録する'}
+                    </button>
+                  </form>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
