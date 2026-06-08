@@ -295,7 +295,9 @@ export default function Home() {
     ]);
 
     // 末尾にサマリー行を追加
+    const [smYear, smMonth] = selectedMonth.split('-');
     rows.push([]);
+    rows.push(['対象月', `${smYear}年${smMonth}月`]);
     rows.push(['総補充品目数', `${itemNamesSet.size} 品目`]);
     rows.push(['総補充数量', `${totalRestockQuantity} 点`]);
     rows.push(['総補充額', `¥${totalRestockAmount.toLocaleString()}`]);
@@ -336,7 +338,9 @@ export default function Home() {
       itemNamesSet.add(log.item_name);
     });
 
+    const [smYear2, smMonth2] = selectedMonth.split('-');
     rows.push([]);
+    rows.push(['対象月', `${smYear2}年${smMonth2}月`]);
     rows.push(['総補充品目数', `${itemNamesSet.size} 品目`]);
     rows.push(['総補充数量', `${totalRestockQuantity} 点`]);
     rows.push(['総補充額', `¥${totalRestockAmount.toLocaleString()}`]);
