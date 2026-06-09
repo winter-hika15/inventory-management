@@ -46,7 +46,7 @@ export async function createSessionToken(payload: Omit<SessionPayload, 'iat' | '
     exp: now + SESSION_MAX_AGE,
   };
 
-  const payloadStr = btoa(JSON.stringify(fullPayload))
+  const payloadStr = btoa(encodeURIComponent(JSON.stringify(fullPayload)))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
@@ -74,7 +74,8 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
 
     // ペイロードの復元
     const paddedPayload = payloadStr.replace(/-/g, '+').replace(/_/g, '/');
-    const decoded = JSON.parse(atob(paddedPayload)) as SessionPayload;
+    const decodedStr = decodeURIComponent(atob(paddedPayload));
+    const decoded = JSON.parse(decodedStr) as SessionPayload;
 
     // 有効期限の確認
     const now = Math.floor(Date.now() / 1000);
