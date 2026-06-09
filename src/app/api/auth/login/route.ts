@@ -20,9 +20,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // テスト用アカウント（admin@example.com等）の場合はローカルモードとして処理
-    const isTestAccount = ['admin@example.com', 'shopA@example.com', 'shopB@example.com'].includes(email);
-    if (isTestAccount || !isServerSupabaseConfigured()) {
+    // Supabaseが未設定の場合はローカルモードとして処理
+    if (!isServerSupabaseConfigured()) {
       return handleLocalLogin(email, password);
     }
 

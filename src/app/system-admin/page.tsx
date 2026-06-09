@@ -73,6 +73,7 @@ export default function SystemAdmin() {
   const [creating, setCreating] = useState(false);
 
   // 本部管理者自身のアカウント設定用
+  const [adminId, setAdminId] = useState<string>('');
   const [adminEmailInput, setAdminEmailInput] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [updatingAdmin, setUpdatingAdmin] = useState(false);
@@ -129,7 +130,8 @@ export default function SystemAdmin() {
           return;
         }
 
-        const { email: userEmail } = sessionData.user;
+        const { id: userId, email: userEmail } = sessionData.user;
+        setAdminId(userId);
 
         try {
           // 店舗データロード
@@ -475,7 +477,41 @@ export default function SystemAdmin() {
   // 本部管理者自身のアカウント設定変更
   const handleUpdateAdminSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    addToast('設定変更はこのフェーズでは未実装です（APIへのリファクタリング中）', 'info');
+    if (!adminEmailInput.trim()) {
+      addToast('メールアドレスを入力してください', 'error');
+      return;
+    }
+
+    if (!adminId) {
+      addToast('管理者情報の取得に失敗しました', 'error');
+      return;
+    }
+
+    setUpdatingAdmin(true);
+    const updatedFields: any = {
+      email: adminEmailInput.trim(),
+    };
+    if (adminPasswordInput.trim()) {
+      updatedFields.password = adminPasswordInput.trim();
+    }
+
+    try {
+      const res = await fetch(`/api/shops/${adminId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedFields)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      localStorage.setItem('admin_email', adminEmailInput.trim());
+      addToast('管理者アカウントの設定を更新しました', 'success');
+      setAdminPasswordInput('');
+    } catch (err: any) {
+      addToast(`更新失敗: ${err.message}`, 'error');
+    } finally {
+      setUpdatingAdmin(false);
+    }
   };
 
   // 集計データの計算
