@@ -71,7 +71,14 @@ html, body {
 .app-container {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 2.5rem 1.5rem;
+  padding: 1.5rem 1rem;
+  width: 100%;
+}
+
+@media (min-width: 640px) {
+  .app-container {
+    padding: 2.5rem 1.5rem;
+  }
 }
 
 /* ヘッダー */
@@ -582,6 +589,8 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
   margin-bottom: 2rem;
   background: rgba(30, 41, 59, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.05);
@@ -591,6 +600,7 @@ html, body {
 
 .admin-nav-links {
   display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
 }
 

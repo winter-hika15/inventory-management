@@ -1019,9 +1019,9 @@ export default function Home() {
                     全 {items.length} 品目 (総在庫数: {totalStockCount}点)
                   </span>
                 </div>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   {Object.keys(pendingDiffs).length > 0 && Object.values(pendingDiffs).some(d => d !== 0) && (
-                    <div className="animate-fade-in" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginRight: '0.5rem' }}>
+                    <div className="animate-fade-in" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginRight: '0.5rem' }}>
                       <button className="btn btn-submit" onClick={() => handleSaveChanges()} disabled={isSaving} style={{ padding: '0.4rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                         <Save size={14} />
                         {isSaving ? '保存中...' : '全て一括保存'}
