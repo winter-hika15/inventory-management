@@ -613,7 +613,7 @@ export default function SystemAdmin() {
             
             {/* 左側：店舗一覧および各店舗の在庫状況 */}
             <section className="glass-card">
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+              <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.6rem' }}>
                 <Users size={20} style={{ color: 'var(--accent)' }} />
                 登録店舗アカウント・在庫状況一覧
               </h2>
@@ -631,7 +631,7 @@ export default function SystemAdmin() {
                   if (isEditing) {
                     return (
                       <div key={shop.id} className="edit-form-overlay animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                           <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--accent)' }}>店舗情報を編集</span>
                           <button onClick={() => setEditingShopId(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                             <X size={18} />
@@ -671,7 +671,7 @@ export default function SystemAdmin() {
                         <button 
                           onClick={() => handleSaveEdit(shop.id)} 
                           className="btn btn-submit" 
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: '0.4rem' }}
                         >
                           <Save size={16} />
                           店舗情報を保存
@@ -729,7 +729,7 @@ export default function SystemAdmin() {
                       </div>
 
                       {/* アクションボタン */}
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                         <button 
                           onClick={() => setSelectedShopForItems(shop)} 
                           className="btn-nav"
@@ -880,7 +880,7 @@ export default function SystemAdmin() {
       {selectedShopForItems && (
         <div className="modal-overlay" onClick={() => setSelectedShopForItems(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '850px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '1rem' }}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '1rem' }}>
               <div>
                 <h2 style={{ fontSize: '1.4rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--text-primary)' }}>
                   <ShoppingBag size={22} style={{ color: 'var(--accent)' }} />
@@ -912,7 +912,7 @@ export default function SystemAdmin() {
                         if (isEditing) {
                           return (
                             <div key={item.id} style={{ background: 'rgba(30, 41, 59, 0.9)', border: '1px solid var(--accent)', padding: '1.25rem', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                                 <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--accent)' }}>商品を編集</span>
                               </div>
 
@@ -965,7 +965,7 @@ export default function SystemAdmin() {
                         }
 
                         return (
-                          <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)', transition: 'all 0.2s' }}>
+                          <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem 1rem', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)', transition: 'all 0.2s' }}>
                             <div>
                               <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)' }}>{item.name}</div>
                               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', display: 'flex', gap: '0.8rem' }}>

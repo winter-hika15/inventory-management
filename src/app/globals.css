@@ -39,10 +39,12 @@
   box-sizing: border-box;
   padding: 0;
   margin: 0;
+  max-width: 100vw;
 }
 
 html, body {
   width: 100%;
+  max-width: 100vw;
   min-height: 100vh;
   background: radial-gradient(ellipse at top, var(--bg-gradient-start), var(--bg-gradient-end));
   color: var(--text-primary);
@@ -50,6 +52,8 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* スクロールバーのカスタマイズ */
@@ -96,6 +100,12 @@ html, body {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .app-header h1 {
+    font-size: 1.75rem;
+  }
 }
 
 .app-header p {
@@ -552,7 +562,7 @@ html, body {
   align-items: center;
   justify-content: center;
   min-height: 80vh;
-  padding: 1.5rem;
+  padding: 1.5rem 1rem;
 }
 
 .login-card {
@@ -563,8 +573,14 @@ html, body {
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--card-border);
   border-radius: 16px;
-  padding: 2.5rem 2rem;
+  padding: 2.5rem 1.5rem;
   box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6);
+}
+
+@media (min-width: 640px) {
+  .login-card {
+    padding: 2.5rem 2rem;
+  }
 }
 
 .login-title {
@@ -575,6 +591,7 @@ html, body {
   background: linear-gradient(to right, #ffffff, #94a3b8);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  word-break: keep-all;
 }
 
 .login-subtitle {
@@ -582,6 +599,7 @@ html, body {
   font-size: 0.85rem;
   text-align: center;
   margin-bottom: 2rem;
+  word-break: keep-all;
 }
 
 /* 管理者ナビゲーション */
@@ -680,15 +698,16 @@ html, body {
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  padding: 0.5rem 1rem;
-  font-size: 0.95rem;
+  padding: 0.5rem 0.8rem;
+  font-size: 0.9rem;
   font-weight: 600;
   cursor: pointer;
   border-radius: 8px;
   transition: all 0.2s ease;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
+  white-space: nowrap;
 }
 
 .tab-button:hover {
