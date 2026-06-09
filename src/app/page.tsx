@@ -519,53 +519,63 @@ export default function Home() {
       const configured = isSupabaseConfigured();
       setUsingSupabase(configured);
 
-      // ローカルストレージからセッション取得
-      const localSession = localStorage.getItem('admin_session');
-      const localEmail = localStorage.getItem('admin_email');
-      const localRole = localStorage.getItem('admin_role') || 'store';
+      // サーバーサイドでセッションを検証
+      try {
+        const sessionRes = await fetch('/api/auth/session');
+        const sessionData = await sessionRes.json();
 
-      if (localSession !== 'active' || !localEmail) {
-        router.push('/login');
-        return;
-      }
+        if (!sessionData.authenticated || !sessionData.user) {
+          router.push('/login');
+          return;
+        }
 
-      setAdminRole(localRole);
+        const { email: userEmail, role: userRole, name: userName } = sessionData.user;
+        setAdminRole(userRole);
 
-      let initialShopEmail = localEmail;
+        // UI表示用にローカルストレージも同期
+        localStorage.setItem('admin_email', userEmail);
+        localStorage.setItem('admin_role', userRole);
+        localStorage.setItem('admin_name', userName);
 
-      // 本部管理者の場合、店舗リストを読み込んで最初の店舗を初期表示にする
-      if (localRole === 'admin') {
-        let loadedShops: Shop[] = [];
-        if (configured) {
-          try {
-            const { data: shopsData } = await supabase
-              .from('shops')
-              .select('*')
-              .eq('role', 'store')
-              .order('name', { ascending: true });
-            loadedShops = shopsData || [];
-          } catch (e) {
-            console.error('店舗リストの取得失敗:', e);
-          }
-        } else {
-          const localShops = localStorage.getItem('shops');
-          if (localShops) {
+        let initialShopEmail = userEmail;
+
+        // 本部管理者の場合、店舗リストを読み込んで最初の店舗を初期表示にする
+        if (userRole === 'admin') {
+          let loadedShops: Shop[] = [];
+          if (configured) {
             try {
-              const parsedShops: Shop[] = JSON.parse(localShops);
-              loadedShops = parsedShops.filter(s => s.role === 'store');
-            } catch (e) {}
+              const { data: shopsData } = await supabase
+                .from('shops')
+                .select('id, name, email, role, created_at')
+                .eq('role', 'store')
+                .order('name', { ascending: true });
+              loadedShops = shopsData || [];
+            } catch (e) {
+              console.error('店舗リストの取得失敗:', e);
+            }
+          } else {
+            const localShops = localStorage.getItem('shops');
+            if (localShops) {
+              try {
+                const parsedShops: Shop[] = JSON.parse(localShops);
+                loadedShops = parsedShops.filter(s => s.role === 'store');
+              } catch (e) {}
+            }
+          }
+          setShops(loadedShops);
+          if (loadedShops.length > 0) {
+            initialShopEmail = loadedShops[0].email;
+          } else {
+            initialShopEmail = ''; // 店舗が1つもない場合
+            addToast('管理店舗がありません。本部管理画面で店舗を作成してください', 'info');
           }
         }
-        setShops(loadedShops);
-        if (loadedShops.length > 0) {
-          initialShopEmail = loadedShops[0].email;
-        } else {
-          initialShopEmail = ''; // 店舗が1つもない場合
-          addToast('管理店舗がありません。本部管理画面で店舗を作成してください', 'info');
-        }
-      }
 
-      setCurrentShopEmail(initialShopEmail);
+        setCurrentShopEmail(initialShopEmail);
+      } catch (err) {
+        console.error('セッション検証エラー:', err);
+        router.push('/login');
+      }
     }
 
     initPage();
@@ -802,7 +812,11 @@ export default function Home() {
 
   // ログアウト処理
   const handleLogout = async () => {
-    localStorage.removeItem('admin_session');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.error('ログアウトエラー:', err);
+    }
     localStorage.removeItem('admin_email');
     localStorage.removeItem('admin_role');
     localStorage.removeItem('admin_name');

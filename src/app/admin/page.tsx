@@ -79,53 +79,59 @@ export default function Admin() {
       const configured = isSupabaseConfigured();
       setUsingSupabase(configured);
 
-      // ローカルストレージからセッション取得
-      const localSession = localStorage.getItem('admin_session');
-      const localEmail = localStorage.getItem('admin_email');
-      const localRole = localStorage.getItem('admin_role') || 'store';
+      // サーバーサイドでセッションを検証
+      try {
+        const sessionRes = await fetch('/api/auth/session');
+        const sessionData = await sessionRes.json();
 
-      if (localSession !== 'active' || !localEmail) {
-        router.push('/login');
-        return;
-      }
-
-      setAdminRole(localRole);
-
-      // 本部管理者（role === 'admin'）以外はアクセスを禁止し、トップページへリダイレクト
-      if (localRole !== 'admin') {
-        router.push('/');
-        return;
-      }
-
-      const shopEmail = localEmail;
-      setCurrentShopEmail(shopEmail);
-      setAdminEmail(shopEmail);
-
-      if (configured) {
-        // 自店舗の商品のみロード
-        try {
-          const { data, error } = await supabase
-            .from('items')
-            .select('*')
-            .eq('shop_id', shopEmail);
-          
-          if (error) throw error;
-          setItems(sortItems(data || []));
-        } catch (error: any) {
-          addToast(`データロード失敗: ${error.message}`, 'error');
+        if (!sessionData.authenticated || !sessionData.user) {
+          router.push('/login');
+          return;
         }
-      } else {
-        // 自店舗の商品のみロード
-        const localData = localStorage.getItem('inventory_items');
-        if (localData) {
+
+        const { email: userEmail, role: userRole } = sessionData.user;
+        setAdminRole(userRole);
+
+        // 本部管理者（role === 'admin'）以外はアクセスを禁止し、トップページへリダイレクト
+        if (userRole !== 'admin') {
+          router.push('/');
+          return;
+        }
+
+        const shopEmail = userEmail;
+        setCurrentShopEmail(shopEmail);
+        setAdminEmail(shopEmail);
+
+        if (configured) {
+          // 自店舗の商品のみロード
           try {
-            const allItems: Item[] = JSON.parse(localData);
-            const shopItems = allItems.filter(item => item.shop_id === shopEmail);
-            setItems(sortItems(shopItems));
-          } catch (e) {
-            setItems([]);
+            const { data, error } = await supabase
+              .from('items')
+              .select('*')
+              .eq('shop_id', shopEmail);
+            
+            if (error) throw error;
+            setItems(sortItems(data || []));
+          } catch (error: any) {
+            addToast(`データロード失敗: ${error.message}`, 'error');
+          }
+        } else {
+          // 自店舗の商品のみロード
+          const localData = localStorage.getItem('inventory_items');
+          if (localData) {
+            try {
+              const allItems: Item[] = JSON.parse(localData);
+              const shopItems = allItems.filter(item => item.shop_id === shopEmail);
+              setItems(sortItems(shopItems));
+            } catch (e) {
+              setItems([]);
+            }
           }
         }
+      } catch (err) {
+        console.error('セッション検証エラー:', err);
+        router.push('/login');
+        return;
       }
       setLoading(false);
     };
@@ -369,7 +375,11 @@ export default function Admin() {
 
   // ログアウト処理
   const handleLogout = async () => {
-    localStorage.removeItem('admin_session');
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.error('ログアウトエラー:', err);
+    }
     localStorage.removeItem('admin_email');
     localStorage.removeItem('admin_role');
     localStorage.removeItem('admin_name');

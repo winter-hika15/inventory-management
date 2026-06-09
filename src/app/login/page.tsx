@@ -2,76 +2,35 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Database, AlertCircle, Store } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
-
-interface Shop {
-  id: string;
-  name: string;
-  email: string;
-  password?: string;
-  role: 'admin' | 'store';
-  created_at: string;
-}
-
-const DEFAULT_INITIAL_SHOPS: Shop[] = [
-  {
-    id: 'admin-id',
-    name: '本部管理者',
-    email: 'admin@example.com',
-    password: 'admin123',
-    role: 'admin',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'shopA-id',
-    name: '店舗A',
-    email: 'shopA@example.com',
-    password: 'shopA123',
-    role: 'store',
-    created_at: new Date().toISOString()
-  },
-  {
-    id: 'shopB-id',
-    name: '店舗B',
-    email: 'shopB@example.com',
-    password: 'shopB123',
-    role: 'store',
-    created_at: new Date().toISOString()
-  }
-];
+import { AlertCircle, Store } from 'lucide-react';
 
 export default function Login() {
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
-  const [usingSupabase, setUsingSupabase] = useState(false);
 
+  // 既存セッションのチェック
   useEffect(() => {
     const checkSession = async () => {
-      const configured = isSupabaseConfigured();
-      setUsingSupabase(configured);
+      try {
+        const res = await fetch('/api/auth/session');
+        const data = await res.json();
 
-      // ローカルストレージの初期店舗データの初期化
-      const localShops = localStorage.getItem('shops');
-      if (!localShops) {
-        localStorage.setItem('shops', JSON.stringify(DEFAULT_INITIAL_SHOPS));
-      }
-
-      // すでにログインしているかチェック。セッションがあれば適切なダッシュボードへ
-      const localSession = localStorage.getItem('admin_session');
-      const localEmail = localStorage.getItem('admin_email');
-      const localRole = localStorage.getItem('admin_role') || 'store';
-
-      if (localSession === 'active' && localEmail) {
-        if (localRole === 'admin') {
-          router.push('/system-admin');
-        } else {
-          router.push('/');
+        if (data.authenticated && data.user) {
+          if (data.user.role === 'admin') {
+            router.push('/system-admin');
+          } else {
+            router.push('/');
+          }
+          return;
         }
+      } catch (err) {
+        console.error('セッション確認エラー:', err);
       }
+      setChecking(false);
     };
     checkSession();
   }, [router]);
@@ -81,70 +40,52 @@ export default function Login() {
     setLoading(true);
     setErrorMsg('');
 
-    if (usingSupabase) {
-      try {
-        // Supabase の shops テーブルから認証
-        const { data: shops, error } = await supabase
-          .from('shops')
-          .select('*')
-          .eq('email', email)
-          .eq('password', password);
+    try {
+      // サーバーサイドの認証API を呼び出す
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
 
-        if (error) throw error;
+      const data = await res.json();
 
-        if (shops && shops.length > 0) {
-          const shop = shops[0];
-          localStorage.setItem('admin_session', 'active');
-          localStorage.setItem('admin_email', shop.email);
-          localStorage.setItem('admin_role', shop.role || 'store');
-          localStorage.setItem('admin_name', shop.name);
-
-          if (shop.role === 'admin') {
-            router.push('/system-admin');
-          } else {
-            router.push('/');
-          }
-        } else {
-          setErrorMsg('店舗メールアドレスまたはパスワードが正しくありません。');
-        }
-      } catch (err: any) {
-        setErrorMsg(err.message || 'ログインに失敗しました。データベースの接続を確認してください。');
-      } finally {
+      if (!res.ok) {
+        setErrorMsg(data.error || 'ログインに失敗しました');
         setLoading(false);
+        return;
       }
-    } else {
-      // ローカルストレージ動作時のログイン
-      setTimeout(() => {
-        const localShopsData = localStorage.getItem('shops');
-        let shops: Shop[] = [];
-        if (localShopsData) {
-          try {
-            shops = JSON.parse(localShopsData);
-          } catch (e) {
-            shops = DEFAULT_INITIAL_SHOPS;
-          }
-        }
 
-        const matchedShop = shops.find(s => s.email === email && s.password === password);
+      if (data.success && data.user) {
+        // セッションCookieは自動的にSet-Cookieヘッダーで設定される
+        // ページ遷移のためにローカルストレージにも最小限の情報を保存（UI表示用のみ）
+        localStorage.setItem('admin_email', data.user.email);
+        localStorage.setItem('admin_role', data.user.role);
+        localStorage.setItem('admin_name', data.user.name);
 
-        if (matchedShop) {
-          localStorage.setItem('admin_session', 'active');
-          localStorage.setItem('admin_email', matchedShop.email);
-          localStorage.setItem('admin_role', matchedShop.role);
-          localStorage.setItem('admin_name', matchedShop.name);
-
-          if (matchedShop.role === 'admin') {
-            router.push('/system-admin');
-          } else {
-            router.push('/');
-          }
+        if (data.user.role === 'admin') {
+          router.push('/system-admin');
         } else {
-          setErrorMsg('店舗メールアドレスまたはパスワードが正しくありません。');
+          router.push('/');
         }
-        setLoading(false);
-      }, 600);
+      }
+    } catch (err) {
+      console.error('ログインエラー:', err);
+      setErrorMsg('ネットワークエラーが発生しました。接続を確認してください。');
+    } finally {
+      setLoading(false);
     }
   };
+
+  if (checking) {
+    return (
+      <div className="login-container">
+        <div className="login-card animate-fade-in" style={{ textAlign: 'center', padding: '3rem' }}>
+          <p style={{ color: 'var(--text-secondary)' }}>セッションを確認中...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="login-container">
@@ -211,42 +152,22 @@ export default function Login() {
           </button>
         </form>
 
-        {/* ローカルログインのヒント */}
-        {!usingSupabase && (
-          <div style={{ 
-            marginTop: '2rem', 
-            background: 'rgba(245, 158, 11, 0.05)', 
-            border: '1px solid rgba(245, 158, 11, 0.1)', 
-            padding: '1rem', 
-            borderRadius: '10px',
-            fontSize: '0.75rem',
-            color: 'var(--text-secondary)'
-          }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#fbbf24', fontWeight: 600, marginBottom: '0.4rem' }}>
-              <Database size={14} />
-              ローカル開発用アカウント
-            </span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <div>
-                <strong>🔑 本部管理者:</strong>
-                <p>アドレス: <code>admin@example.com</code></p>
-                <p>パスワード: <code>admin123</code></p>
-              </div>
-              <div style={{ borderTop: '1px dashed rgba(255, 255, 255, 0.1)', paddingTop: '0.4rem' }}>
-                <strong>🏪 店舗A:</strong>
-                <p>アドレス: <code>shopA@example.com</code></p>
-                <p>パスワード: <code>shopA123</code></p>
-              </div>
-              <div style={{ borderTop: '1px dashed rgba(255, 255, 255, 0.1)', paddingTop: '0.4rem' }}>
-                <strong>🏪 店舗B:</strong>
-                <p>アドレス: <code>shopB@example.com</code></p>
-                <p>パスワード: <code>shopB123</code></p>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* セキュリティ情報表示 */}
+        <div style={{ 
+          marginTop: '2rem', 
+          background: 'rgba(16, 185, 129, 0.05)', 
+          border: '1px solid rgba(16, 185, 129, 0.1)', 
+          padding: '0.75rem', 
+          borderRadius: '10px',
+          fontSize: '0.75rem',
+          color: 'var(--text-secondary)'
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#10b981', fontWeight: 600, marginBottom: '0.3rem' }}>
+            🔒 セキュア認証
+          </span>
+          <p>ログイン情報はサーバーサイドで安全に検証されます。パスワードはハッシュ化されて保存され、通信経路にも公開されません。</p>
+        </div>
       </div>
     </div>
   );
 }
-

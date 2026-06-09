@@ -14,8 +14,6 @@ import {
   Save, 
   X, 
   Key, 
-  Eye, 
-  EyeOff,
   LogOut,
   ArrowRight,
   Database,
@@ -81,9 +79,6 @@ export default function SystemAdmin() {
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [updatingAdmin, setUpdatingAdmin] = useState(false);
 
-  // パスワード表示トグル用
-  const [visiblePasswords, setVisiblePasswords] = useState<{ [key: string]: boolean }>({});
-
   // 編集用ステート
   const [editingShopId, setEditingShopId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -128,61 +123,66 @@ export default function SystemAdmin() {
       const configured = isSupabaseConfigured();
       setUsingSupabase(configured);
 
-      // セッションの確認
-      const localSession = localStorage.getItem('admin_session');
-      const localEmail = localStorage.getItem('admin_email');
-      const localRole = localStorage.getItem('admin_role');
+      // サーバーサイドでセッションを検証
+      try {
+        const sessionRes = await fetch('/api/auth/session');
+        const sessionData = await sessionRes.json();
 
-      if (localSession !== 'active' || localRole !== 'admin') {
+        if (!sessionData.authenticated || !sessionData.user || sessionData.user.role !== 'admin') {
+          router.push('/login');
+          return;
+        }
+
+        const { email: userEmail } = sessionData.user;
+
+        if (configured) {
+          try {
+            // 店舗データロード（パスワードカラムを除外）
+            const { data: shopsData, error: shopsError } = await supabase
+              .from('shops')
+              .select('id, name, email, role, created_at')
+              .order('created_at', { ascending: false });
+
+            if (shopsError) throw shopsError;
+            setShops(shopsData || []);
+
+            // 全商品データロード
+            const { data: itemsData, error: itemsError } = await supabase
+              .from('items')
+              .select('*');
+
+            if (itemsError) throw itemsError;
+            setItems(itemsData || []);
+
+          } catch (err: any) {
+            addToast(`データ取得失敗: ${err.message}`, 'error');
+          }
+        } else {
+          // ローカルストレージからロード
+          const localShops = localStorage.getItem('shops');
+          if (localShops) {
+            try {
+              setShops(JSON.parse(localShops));
+            } catch (e) {
+              setShops([]);
+            }
+          }
+
+          const localItems = localStorage.getItem('inventory_items');
+          if (localItems) {
+            try {
+              setItems(JSON.parse(localItems));
+            } catch (e) {
+              setItems([]);
+            }
+          }
+        }
+        
+        setAdminEmailInput(userEmail);
+      } catch (err) {
+        console.error('セッション検証エラー:', err);
         router.push('/login');
         return;
-      }
-
-      if (configured) {
-        try {
-          // 店舗データロード
-          const { data: shopsData, error: shopsError } = await supabase
-            .from('shops')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-          if (shopsError) throw shopsError;
-          setShops(shopsData || []);
-
-          // 全商品データロード
-          const { data: itemsData, error: itemsError } = await supabase
-            .from('items')
-            .select('*');
-
-          if (itemsError) throw itemsError;
-          setItems(itemsData || []);
-
-        } catch (err: any) {
-          addToast(`データ取得失敗: ${err.message}`, 'error');
-        }
-      } else {
-        // ローカルストレージからロード
-        const localShops = localStorage.getItem('shops');
-        if (localShops) {
-          try {
-            setShops(JSON.parse(localShops));
-          } catch (e) {
-            setShops([]);
-          }
-        }
-
-        const localItems = localStorage.getItem('inventory_items');
-        if (localItems) {
-          try {
-            setItems(JSON.parse(localItems));
-          } catch (e) {
-            setItems([]);
-          }
-        }
-      }
-      
-      if (localEmail) {
-        setAdminEmailInput(localEmail);
       }
       setLoading(false);
     }
@@ -233,14 +233,6 @@ export default function SystemAdmin() {
     }
   };
 
-  // パスワード表示トグル
-
-  const togglePasswordVisibility = (shopId: string) => {
-    setVisiblePasswords(prev => ({
-      ...prev,
-      [shopId]: !prev[shopId]
-    }));
-  };
 
   // 店舗の新規発行
   const handleCreateShop = async (e: React.FormEvent) => {
@@ -668,8 +660,12 @@ export default function SystemAdmin() {
   };
  
   // ログアウト
-  const handleLogout = () => {
-    localStorage.removeItem('admin_session');
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.error('ログアウトエラー:', err);
+    }
     localStorage.removeItem('admin_email');
     localStorage.removeItem('admin_role');
     localStorage.removeItem('admin_name');
@@ -852,7 +848,6 @@ export default function SystemAdmin() {
               <div className="items-list" style={{ gap: '1.25rem' }}>
                 {shops.map(shop => {
                   const isEditing = editingShopId === shop.id;
-                  const isPassVisible = visiblePasswords[shop.id] || false;
                   
                   // 管理者アカウントは表示を制限
                   if (shop.role === 'admin') return null;
@@ -935,19 +930,13 @@ export default function SystemAdmin() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                           <span>ID: <code>{shop.email}</code></span>
                           
-                          {/* パスワード表示エリア */}
+                          {/* パスワード状態表示（セキュリティのため平文表示は不可） */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.2rem' }}>
                             <Key size={12} />
                             <span>パスワード:</span>
-                            <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)' }}>
-                              {isPassVisible ? (shop.password || '設定なし') : '••••••••'}
+                            <span style={{ fontFamily: 'monospace', fontWeight: 600, color: '#10b981' }}>
+                              🔒 設定済み（セキュリティ保護中）
                             </span>
-                            <button 
-                              onClick={() => togglePasswordVisibility(shop.id)}
-                              style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                            >
-                              {isPassVisible ? <EyeOff size={14} /> : <Eye size={14} />}
-                            </button>
                           </div>
                         </div>
                       </div>
