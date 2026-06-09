@@ -167,6 +167,33 @@ export default function Login() {
           </span>
           <p>ログイン情報はサーバーサイドで安全に検証されます。パスワードはハッシュ化されて保存され、通信経路にも公開されません。</p>
         </div>
+
+        {/* テスト用ログインのヒント */}
+        <div style={{ 
+          marginTop: '1rem', 
+          background: 'rgba(245, 158, 11, 0.05)', 
+          border: '1px solid rgba(245, 158, 11, 0.1)', 
+          padding: '1rem', 
+          borderRadius: '10px',
+          fontSize: '0.75rem',
+          color: 'var(--text-secondary)'
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: '#fbbf24', fontWeight: 600, marginBottom: '0.4rem' }}>
+            テスト用アカウント
+          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div>
+              <strong>🔑 本部管理者:</strong>
+              <p>アドレス: <code>admin@example.com</code></p>
+              <p>パスワード: <code>admin123</code></p>
+            </div>
+            <div style={{ borderTop: '1px dashed rgba(255, 255, 255, 0.1)', paddingTop: '0.4rem' }}>
+              <strong>🏪 店舗A:</strong>
+              <p>アドレス: <code>shopA@example.com</code></p>
+              <p>パスワード: <code>shopA123</code></p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

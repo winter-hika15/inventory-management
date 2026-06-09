@@ -12,13 +12,12 @@ import {
   ArrowLeft, 
   LogOut, 
   Edit2, 
-  X, 
+  X,
   Save, 
   User, 
   Lock,
   Store
 } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 
 interface Item {
   id: string;
@@ -36,7 +35,6 @@ export default function Admin() {
   const router = useRouter();
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
-  const [usingSupabase, setUsingSupabase] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; type: 'success' | 'error' | 'info' }[]>([]);
   const [currentShopEmail, setCurrentShopEmail] = useState('');
   const [adminRole, setAdminRole] = useState('store');
@@ -76,8 +74,6 @@ export default function Admin() {
   useEffect(() => {
     const initPage = async () => {
       setLoading(true);
-      const configured = isSupabaseConfigured();
-      setUsingSupabase(configured);
 
       // サーバーサイドでセッションを検証
       try {
@@ -102,31 +98,14 @@ export default function Admin() {
         setCurrentShopEmail(shopEmail);
         setAdminEmail(shopEmail);
 
-        if (configured) {
-          // 自店舗の商品のみロード
-          try {
-            const { data, error } = await supabase
-              .from('items')
-              .select('*')
-              .eq('shop_id', shopEmail);
-            
-            if (error) throw error;
-            setItems(sortItems(data || []));
-          } catch (error: any) {
-            addToast(`データロード失敗: ${error.message}`, 'error');
-          }
-        } else {
-          // 自店舗の商品のみロード
-          const localData = localStorage.getItem('inventory_items');
-          if (localData) {
-            try {
-              const allItems: Item[] = JSON.parse(localData);
-              const shopItems = allItems.filter(item => item.shop_id === shopEmail);
-              setItems(sortItems(shopItems));
-            } catch (e) {
-              setItems([]);
-            }
-          }
+        // 自店舗の商品のみロード
+        try {
+          const res = await fetch(`/api/items?shop_id=${encodeURIComponent(shopEmail)}`);
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error);
+          setItems(sortItems(data.items || []));
+        } catch (error: any) {
+          addToast(`データロード失敗: ${error.message}`, 'error');
         }
       } catch (err) {
         console.error('セッション検証エラー:', err);
@@ -163,20 +142,6 @@ export default function Admin() {
   const syncItemsState = (shopUpdatedItems: Item[]) => {
     const sorted = sortItems(shopUpdatedItems);
     setItems(sorted);
-
-    const localData = localStorage.getItem('inventory_items');
-    let allItems: Item[] = [];
-    if (localData) {
-      try {
-        allItems = JSON.parse(localData);
-      } catch (e) {
-        allItems = [];
-      }
-    }
-
-    const otherShopsItems = allItems.filter(item => item.shop_id !== currentShopEmail);
-    const merged = [...otherShopsItems, ...sorted];
-    localStorage.setItem('inventory_items', JSON.stringify(merged));
   };
 
   // 商品登録
@@ -202,30 +167,21 @@ export default function Admin() {
       shop_id: currentShopEmail, // ログイン中の店舗IDを紐付け
     };
 
-    if (usingSupabase) {
-      try {
-        const { data, error } = await supabase
-          .from('items')
-          .insert([newItemPayload])
-          .select();
+    try {
+      const res = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newItemPayload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-        if (error) throw error;
-
-        if (data && data[0]) {
-          syncItemsState([...items, data[0]]);
-          addToast(`商品「${data[0].name}」をDBに登録しました`, 'success');
-        }
-      } catch (error: any) {
-        addToast(`登録失敗: ${error.message}`, 'error');
+      if (data.item) {
+        syncItemsState([...items, data.item]);
+        addToast(`商品「${data.item.name}」を登録しました`, 'success');
       }
-    } else {
-      const created: Item = {
-        id: Date.now().toString(),
-        ...newItemPayload,
-        created_at: new Date().toISOString()
-      };
-      syncItemsState([...items, created]);
-      addToast(`商品「${created.name}」をローカルに登録しました`, 'success');
+    } catch (error: any) {
+      addToast(`登録失敗: ${error.message}`, 'error');
     }
 
     // クリア
@@ -273,20 +229,16 @@ export default function Admin() {
     const updated = items.map(i => i.id === id ? { ...i, ...updatedItem } : i);
     syncItemsState(updated);
 
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase
-          .from('items')
-          .update(updatedItem)
-          .eq('id', id);
-
-        if (error) throw error;
-        addToast('商品を更新しました', 'success');
-      } catch (error: any) {
-        addToast(`更新失敗: ${error.message}`, 'error');
-      }
-    } else {
-      addToast('商品を更新しました（ローカル）', 'success');
+    try {
+      const res = await fetch(`/api/items/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedItem)
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      addToast('商品を更新しました', 'success');
+    } catch (error: any) {
+      addToast(`更新失敗: ${error.message}`, 'error');
     }
 
     setEditingItemId(null);
@@ -299,78 +251,19 @@ export default function Admin() {
     const updated = items.filter(i => i.id !== id);
     syncItemsState(updated);
 
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase.from('items').delete().eq('id', id);
-        if (error) throw error;
-        addToast(`商品「${name}」を削除しました`, 'info');
-      } catch (error: any) {
-        addToast(`削除失敗: ${error.message}`, 'error');
-      }
-    } else {
+    try {
+      const res = await fetch(`/api/items/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error);
       addToast(`商品「${name}」を削除しました`, 'info');
+    } catch (error: any) {
+      addToast(`削除失敗: ${error.message}`, 'error');
     }
   };
 
   // アカウント/ログイン設定の保存
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSettingLoading(true);
-
-    if (usingSupabase) {
-      try {
-        // パスワード変更
-        if (newPassword) {
-          const { error } = await supabase.auth.updateUser({
-            password: newPassword
-          });
-          if (error) throw error;
-          addToast('パスワードを更新しました。', 'success');
-        }
-
-        // メールアドレス変更
-        if (adminEmail && adminEmail !== currentShopEmail) {
-          const { error } = await supabase.auth.updateUser({
-            email: adminEmail
-          });
-          if (error) throw error;
-          addToast('メールアドレスの更新リクエストを送信しました。受信トレイを確認してください。', 'info');
-        }
-
-        setNewPassword('');
-      } catch (error: any) {
-        addToast(`設定変更失敗: ${error.message}`, 'error');
-      } finally {
-        setSettingLoading(false);
-      }
-    } else {
-      // ローカルストレージ動作時の店舗パスワード変更
-      setTimeout(() => {
-        if (adminEmail && adminEmail !== currentShopEmail) {
-          // ダミーアドレス変更処理
-          localStorage.setItem('admin_email', adminEmail);
-          setCurrentShopEmail(adminEmail);
-          
-          // 前のメールアドレスのデータを新しいアドレスに移行
-          const localData = localStorage.getItem('inventory_items');
-          if (localData) {
-            try {
-              const allItems: Item[] = JSON.parse(localData);
-              const migrated = allItems.map(item => item.shop_id === currentShopEmail ? { ...item, shop_id: adminEmail } : item);
-              localStorage.setItem('inventory_items', JSON.stringify(migrated));
-            } catch (e) {}
-          }
-        }
-        
-        if (newPassword) {
-          localStorage.setItem(`local_password_${adminEmail || currentShopEmail}`, newPassword);
-          addToast('ローカル店舗パスワードを更新しました。', 'success');
-        }
-        addToast('ログイン設定を保存しました。', 'success');
-        setNewPassword('');
-        setSettingLoading(false);
-      }, 500);
-    }
+    addToast('設定変更はこのフェーズでは未実装です（APIへのリファクタリング中）', 'info');
   };
 
   // ログアウト処理

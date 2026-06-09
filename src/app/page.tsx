@@ -24,7 +24,6 @@ import {
   TrendingUp,
   Download
 } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 
 interface Item {
   id: string;
@@ -120,7 +119,6 @@ export default function Home() {
   const [items, setItems] = useState<Item[]>([]);
   const [shops, setShops] = useState<Shop[]>([]); // 店舗リスト用
   const [loading, setLoading] = useState(true);
-  const [usingSupabase, setUsingSupabase] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; type: 'success' | 'error' | 'info' }[]>([]);
   const [currentShopEmail, setCurrentShopEmail] = useState('');
   const [adminRole, setAdminRole] = useState('store');
@@ -349,119 +347,46 @@ export default function Home() {
   };
 
   // 特定店舗の商品データのロード
-  const loadShopItems = async (shopEmail: string, configured: boolean) => {
+  const loadShopItems = async (shopEmail: string) => {
     if (!shopEmail) return;
     setLoading(true);
 
-    if (configured) {
-      try {
-        const { data, error } = await supabase
-          .from('items')
-          .select('*')
-          .eq('shop_id', shopEmail);
+    try {
+      const res = await fetch(`/api/items?shop_id=${encodeURIComponent(shopEmail)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-          setItems(sortItems(data));
-        } else {
-          // もしこの店舗のデータが1件もない場合、初期の店舗別サンプルデータを自動登録
-          const shopInitialItems = DEFAULT_INITIAL_ITEMS.filter(item => item.shop_id === shopEmail);
-          
-          if (shopInitialItems.length > 0) {
-            const { error: insertError } = await supabase
-              .from('items')
-              .insert(shopInitialItems.map(({ id, ...rest }) => rest)); // idは自動生成
-
-            if (insertError) throw insertError;
-
-            const { data: refetched } = await supabase
-              .from('items')
-              .select('*')
-              .eq('shop_id', shopEmail);
-            
-            if (refetched) {
-              setItems(sortItems(refetched));
-            }
-          } else {
-            setItems([]);
-          }
-        }
-        addToast(`店舗 ${shopEmail} のデータをロードしました`, 'success');
-      } catch (error: any) {
-        console.error('Supabaseロード失敗:', error.message);
-        addToast(`DB接続エラー: ${error.message}`, 'error');
+      if (data.items && data.items.length > 0) {
+        setItems(sortItems(data.items));
+      } else {
         setItems([]);
       }
-    } else {
-      // ローカルストレージからロード
-      const localData = localStorage.getItem('inventory_items');
-      let allItems: Item[] = [];
-      if (localData) {
-        try {
-          allItems = JSON.parse(localData);
-        } catch (e) {
-          allItems = [];
-        }
-      }
-
-      // 選択中の店舗データのみに絞り込む
-      let shopItems = allItems.filter(item => item.shop_id === shopEmail);
-
-      // この店舗のデータが初めての場合、初期データをセット
-      if (shopItems.length === 0) {
-        const shopInitialItems = DEFAULT_INITIAL_ITEMS.filter(item => item.shop_id === shopEmail);
-        
-        if (shopInitialItems.length > 0) {
-          allItems = [...allItems, ...shopInitialItems];
-          localStorage.setItem('inventory_items', JSON.stringify(allItems));
-          shopItems = shopInitialItems;
-        }
-      }
-
-      setItems(sortItems(shopItems));
-      addToast(`店舗 ${shopEmail} (ローカル) のデータをロードしました`, 'info');
+      addToast(`店舗 ${shopEmail} のデータをロードしました`, 'success');
+    } catch (error: any) {
+      console.error('データ取得エラー:', error.message);
+      addToast(`取得エラー: ${error.message}`, 'error');
+      setItems([]);
     }
     setLoading(false);
   };
 
   // 特定店舗の補充履歴のロード
-  const loadShopRestockHistory = async (shopEmail: string, configured: boolean) => {
+  const loadShopRestockHistory = async (shopEmail: string) => {
     if (!shopEmail) return;
 
-    if (configured) {
-      try {
-        const { data, error } = await supabase
-          .from('restock_history')
-          .select('*')
-          .eq('shop_id', shopEmail)
-          .order('created_at', { ascending: false });
-
-        if (error) throw error;
-        setRestockHistory(data || []);
-      } catch (error: any) {
-        console.error('補充履歴ロード失敗:', error.message);
-        setRestockHistory([]);
-      }
-    } else {
-      // ローカルストレージからロード
-      const localHistory = localStorage.getItem('restock_history');
-      if (localHistory) {
-        try {
-          const allHistory: RestockHistory[] = JSON.parse(localHistory);
-          const shopHistory = allHistory.filter(h => h.shop_id === shopEmail);
-          setRestockHistory(shopHistory.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
-        } catch (e) {
-          setRestockHistory([]);
-        }
-      } else {
-        setRestockHistory([]);
-      }
+    try {
+      const res = await fetch(`/api/restock?shop_id=${encodeURIComponent(shopEmail)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setRestockHistory(data.history || []);
+    } catch (error: any) {
+      console.error('補充履歴ロード失敗:', error.message);
+      setRestockHistory([]);
     }
   };
 
   // 補充履歴の記録
-  const addRestockLog = async (itemId: string, itemName: string, quantity: number, price: number, shopEmail: string, configured: boolean) => {
+  const addRestockLog = async (itemId: string, itemName: string, quantity: number, price: number, shopEmail: string) => {
     if (quantity <= 0) return;
 
     const newLogPayload = {
@@ -472,43 +397,21 @@ export default function Home() {
       shop_id: shopEmail,
     };
 
-    if (configured) {
-      try {
-        const { data, error } = await supabase
-          .from('restock_history')
-          .insert([newLogPayload])
-          .select();
+    try {
+      const res = await fetch('/api/restock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLogPayload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-        if (error) throw error;
-        if (data && data[0]) {
-          setRestockHistory(prev => [data[0], ...prev]);
-        }
-      } catch (error: any) {
-        console.error('補充履歴の保存に失敗しました:', error.message);
-        addToast(`補充履歴の保存失敗: ${error.message}`, 'error');
+      if (data.log) {
+        setRestockHistory(prev => [data.log, ...prev]);
       }
-    } else {
-      const createdLog: RestockHistory = {
-        id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        ...newLogPayload,
-        created_at: new Date().toISOString()
-      };
-
-      const localHistory = localStorage.getItem('restock_history');
-      let allHistory: RestockHistory[] = [];
-      if (localHistory) {
-        try {
-          allHistory = JSON.parse(localHistory);
-        } catch (e) {
-          allHistory = [];
-        }
-      }
-
-      const updatedHistory = [createdLog, ...allHistory];
-      localStorage.setItem('restock_history', JSON.stringify(updatedHistory));
-      
-      // 画面上のステートも更新（現在の店舗分のみ）
-      setRestockHistory(prev => [createdLog, ...prev]);
+    } catch (error: any) {
+      console.error('補充履歴の保存に失敗しました:', error.message);
+      addToast(`補充履歴の保存失敗: ${error.message}`, 'error');
     }
   };
 
@@ -516,9 +419,6 @@ export default function Home() {
   // セッションチェックと初期初期化
   useEffect(() => {
     async function initPage() {
-      const configured = isSupabaseConfigured();
-      setUsingSupabase(configured);
-
       // サーバーサイドでセッションを検証
       try {
         const sessionRes = await fetch('/api/auth/session');
@@ -542,26 +442,16 @@ export default function Home() {
         // 本部管理者の場合、店舗リストを読み込んで最初の店舗を初期表示にする
         if (userRole === 'admin') {
           let loadedShops: Shop[] = [];
-          if (configured) {
-            try {
-              const { data: shopsData } = await supabase
-                .from('shops')
-                .select('id, name, email, role, created_at')
-                .eq('role', 'store')
-                .order('name', { ascending: true });
-              loadedShops = shopsData || [];
-            } catch (e) {
-              console.error('店舗リストの取得失敗:', e);
+          try {
+            const shopsRes = await fetch('/api/shops');
+            const shopsData = await shopsRes.json();
+            if (shopsRes.ok && shopsData.shops) {
+              loadedShops = shopsData.shops.filter((s: Shop) => s.role === 'store');
             }
-          } else {
-            const localShops = localStorage.getItem('shops');
-            if (localShops) {
-              try {
-                const parsedShops: Shop[] = JSON.parse(localShops);
-                loadedShops = parsedShops.filter(s => s.role === 'store');
-              } catch (e) {}
-            }
+          } catch (e) {
+            console.error('店舗リストの取得失敗:', e);
           }
+          
           setShops(loadedShops);
           if (loadedShops.length > 0) {
             initialShopEmail = loadedShops[0].email;
@@ -584,32 +474,15 @@ export default function Home() {
   // 表示店舗の切り替え検知
   useEffect(() => {
     if (currentShopEmail) {
-      loadShopItems(currentShopEmail, usingSupabase);
-      loadShopRestockHistory(currentShopEmail, usingSupabase);
+      loadShopItems(currentShopEmail);
+      loadShopRestockHistory(currentShopEmail);
     }
-  }, [currentShopEmail, usingSupabase]);
-
+  }, [currentShopEmail]);
 
   // 全体データのうち、現在の店舗以外のデータを崩さずにローカル状態および保存用を同期する
   const syncItemsState = (shopUpdatedItems: Item[]) => {
     const sorted = sortItems(shopUpdatedItems);
     setItems(sorted);
-
-    // ローカルストレージには「全店舗分」のデータをマージして保持する
-    const localData = localStorage.getItem('inventory_items');
-    let allItems: Item[] = [];
-    if (localData) {
-      try {
-        allItems = JSON.parse(localData);
-      } catch (e) {
-        allItems = [];
-      }
-    }
-
-    // 現在の店舗以外のデータを残し、現在の店舗のデータをマージ
-    const otherShopsItems = allItems.filter(item => item.shop_id !== currentShopEmail);
-    const merged = [...otherShopsItems, ...sorted];
-    localStorage.setItem('inventory_items', JSON.stringify(merged));
   };
 
   // 1個売る
@@ -620,19 +493,16 @@ export default function Home() {
     const updated = items.map(i => i.id === item.id ? { ...i, stock: newStock } : i);
     syncItemsState(updated);
 
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase
-          .from('items')
-          .update({ stock: newStock })
-          .eq('id', item.id);
-        if (error) throw error;
-        addToast(`${item.name}を1個出庫しました`, 'success');
-      } catch (error: any) {
-        addToast(`データベース更新エラー: ${error.message}`, 'error');
-      }
-    } else {
+    try {
+      const res = await fetch(`/api/items/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock: newStock })
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
       addToast(`${item.name}を1個出庫しました`, 'success');
+    } catch (error: any) {
+      addToast(`データベース更新エラー: ${error.message}`, 'error');
     }
   };
 
@@ -642,21 +512,18 @@ export default function Home() {
 
     const updated = items.map(i => i.id === item.id ? { ...i, stock: newStock } : i);
     syncItemsState(updated);
-    addRestockLog(item.id, item.name, 1, item.price, currentShopEmail, usingSupabase);
+    addRestockLog(item.id, item.name, 1, item.price, currentShopEmail);
 
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase
-          .from('items')
-          .update({ stock: newStock })
-          .eq('id', item.id);
-        if (error) throw error;
-        addToast(`${item.name}を1個補充しました`, 'success');
-      } catch (error: any) {
-        addToast(`データベース更新エラー: ${error.message}`, 'error');
-      }
-    } else {
+    try {
+      const res = await fetch(`/api/items/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock: newStock })
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
       addToast(`${item.name}を1個補充しました`, 'success');
+    } catch (error: any) {
+      addToast(`データベース更新エラー: ${error.message}`, 'error');
     }
   };
 
@@ -684,36 +551,24 @@ export default function Home() {
       shop_id: currentShopEmail, // ログイン中の店舗IDを紐付け
     };
 
-    if (usingSupabase) {
-      try {
-        const { data, error } = await supabase
-          .from('items')
-          .insert([newItemPayload])
-          .select();
+    try {
+      const res = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newItemPayload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-        if (error) throw error;
-
-        if (data && data[0]) {
-          syncItemsState([...items, data[0]]);
-          if (stock > 0) {
-            addRestockLog(data[0].id, data[0].name, stock, price, currentShopEmail, usingSupabase);
-          }
-          addToast(`商品「${data[0].name}」を追加しました`, 'success');
+      if (data.item) {
+        syncItemsState([...items, data.item]);
+        if (stock > 0) {
+          addRestockLog(data.item.id, data.item.name, stock, price, currentShopEmail);
         }
-      } catch (error: any) {
-        addToast(`追加失敗: ${error.message}`, 'error');
+        addToast(`商品「${data.item.name}」を追加しました`, 'success');
       }
-    } else {
-      const created: Item = {
-        id: Date.now().toString(),
-        ...newItemPayload,
-        created_at: new Date().toISOString()
-      };
-      syncItemsState([...items, created]);
-      if (stock > 0) {
-        addRestockLog(created.id, created.name, stock, price, currentShopEmail, usingSupabase);
-      }
-      addToast(`商品「${created.name}」を追加しました（ローカル）`, 'success');
+    } catch (error: any) {
+      addToast(`追加失敗: ${error.message}`, 'error');
     }
 
 
@@ -767,24 +622,19 @@ export default function Home() {
     syncItemsState(updated);
 
     if (restockQty > 0) {
-      addRestockLog(id, updatedItem.name, restockQty, price, currentShopEmail, usingSupabase);
+      addRestockLog(id, updatedItem.name, restockQty, price, currentShopEmail);
     }
 
-
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase
-          .from('items')
-          .update(updatedItem)
-          .eq('id', id);
-
-        if (error) throw error;
-        addToast('商品を更新しました', 'success');
-      } catch (error: any) {
-        addToast(`更新失敗: ${error.message}`, 'error');
-      }
-    } else {
-      addToast('商品を更新しました（ローカル）', 'success');
+    try {
+      const res = await fetch(`/api/items/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedItem)
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      addToast('商品を更新しました', 'success');
+    } catch (error: any) {
+      addToast(`更新失敗: ${error.message}`, 'error');
     }
 
     setEditingItemId(null);
@@ -797,16 +647,12 @@ export default function Home() {
     const updated = items.filter(i => i.id !== id);
     syncItemsState(updated);
 
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase.from('items').delete().eq('id', id);
-        if (error) throw error;
-        addToast(`商品「${name}」を削除しました`, 'info');
-      } catch (error: any) {
-        addToast(`削除失敗: ${error.message}`, 'error');
-      }
-    } else {
+    try {
+      const res = await fetch(`/api/items/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error);
       addToast(`商品「${name}」を削除しました`, 'info');
+    } catch (error: any) {
+      addToast(`削除失敗: ${error.message}`, 'error');
     }
   };
 
@@ -930,16 +776,6 @@ export default function Home() {
         <p>初心者にやさしいリアルタイム在庫・発注管理システム</p>
       </header>
 
-      {/* Supabase未設定バナー */}
-      {!usingSupabase && (
-        <div className="supabase-banner">
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <AlertCircle size={18} />
-            現在ローカルストレージモードで動作しています。データをデータベースに保存するには、<code>.env.local</code> に Supabase の接続キーを設定してください。
-          </span>
-        </div>
-      )}
-
       {/* 本部管理者用の店舗切り替えセレクトボックス */}
       {adminRole === 'admin' && (
         <div className="glass-card" style={{ padding: '1.25rem', marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', borderLeft: '5px solid var(--accent)' }}>
@@ -971,11 +807,6 @@ export default function Home() {
         </div>
       )}
 
-      {/* 接続先情報 */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)', alignItems: 'center', gap: '0.4rem' }}>
-        <Database size={14} color={usingSupabase ? '#10b981' : '#f59e0b'} />
-        <span>接続先: {usingSupabase ? 'Supabase Database' : 'ブラウザローカルストレージ'}</span>
-      </div>
 
       {/* サマリーバー */}
       <section className="summary-bar">

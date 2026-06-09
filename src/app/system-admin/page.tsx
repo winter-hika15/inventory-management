@@ -20,7 +20,6 @@ import {
   CheckCircle2,
   AlertCircle
 } from 'lucide-react';
-import { supabase, isSupabaseConfigured } from '@/lib/supabaseClient';
 
 interface Shop {
   id: string;
@@ -65,7 +64,6 @@ export default function SystemAdmin() {
   const [shops, setShops] = useState<Shop[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
-  const [usingSupabase, setUsingSupabase] = useState(false);
   const [toasts, setToasts] = useState<{ id: number; text: string; type: 'success' | 'error' | 'info' }[]>([]);
 
   // フォーム用ステート
@@ -120,8 +118,6 @@ export default function SystemAdmin() {
   useEffect(() => {
     async function initPage() {
       setLoading(true);
-      const configured = isSupabaseConfigured();
-      setUsingSupabase(configured);
 
       // サーバーサイドでセッションを検証
       try {
@@ -135,47 +131,19 @@ export default function SystemAdmin() {
 
         const { email: userEmail } = sessionData.user;
 
-        if (configured) {
-          try {
-            // 店舗データロード（パスワードカラムを除外）
-            const { data: shopsData, error: shopsError } = await supabase
-              .from('shops')
-              .select('id, name, email, role, created_at')
-              .order('created_at', { ascending: false });
+        try {
+          // 店舗データロード
+          const shopsRes = await fetch('/api/shops');
+          const shopsData = await shopsRes.json();
+          if (shopsRes.ok) setShops(shopsData.shops || []);
 
-            if (shopsError) throw shopsError;
-            setShops(shopsData || []);
+          // 全商品データロード
+          const itemsRes = await fetch('/api/items');
+          const itemsData = await itemsRes.json();
+          if (itemsRes.ok) setItems(itemsData.items || []);
 
-            // 全商品データロード
-            const { data: itemsData, error: itemsError } = await supabase
-              .from('items')
-              .select('*');
-
-            if (itemsError) throw itemsError;
-            setItems(itemsData || []);
-
-          } catch (err: any) {
-            addToast(`データ取得失敗: ${err.message}`, 'error');
-          }
-        } else {
-          // ローカルストレージからロード
-          const localShops = localStorage.getItem('shops');
-          if (localShops) {
-            try {
-              setShops(JSON.parse(localShops));
-            } catch (e) {
-              setShops([]);
-            }
-          }
-
-          const localItems = localStorage.getItem('inventory_items');
-          if (localItems) {
-            try {
-              setItems(JSON.parse(localItems));
-            } catch (e) {
-              setItems([]);
-            }
-          }
+        } catch (err: any) {
+          addToast(`データ取得失敗: ${err.message}`, 'error');
         }
         
         setAdminEmailInput(userEmail);
@@ -190,7 +158,7 @@ export default function SystemAdmin() {
   }, [router]);
 
   // 補充履歴の記録（本部管理者画面用）
-  const addRestockLog = async (itemId: string, itemName: string, quantity: number, price: number, shopEmail: string, configured: boolean) => {
+  const addRestockLog = async (itemId: string, itemName: string, quantity: number, price: number, shopEmail: string) => {
     if (quantity <= 0) return;
 
     const newLogPayload = {
@@ -201,35 +169,14 @@ export default function SystemAdmin() {
       shop_id: shopEmail,
     };
 
-    if (configured) {
-      try {
-        const { error } = await supabase
-          .from('restock_history')
-          .insert([newLogPayload]);
-
-        if (error) throw error;
-      } catch (error: any) {
-        console.error('補充履歴の保存に失敗しました:', error.message);
-      }
-    } else {
-      const createdLog: RestockHistory = {
-        id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        ...newLogPayload,
-        created_at: new Date().toISOString()
-      };
-
-      const localHistory = localStorage.getItem('restock_history');
-      let allHistory: RestockHistory[] = [];
-      if (localHistory) {
-        try {
-          allHistory = JSON.parse(localHistory);
-        } catch (e) {
-          allHistory = [];
-        }
-      }
-
-      const updatedHistory = [createdLog, ...allHistory];
-      localStorage.setItem('restock_history', JSON.stringify(updatedHistory));
+    try {
+      await fetch('/api/restock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newLogPayload)
+      });
+    } catch (error: any) {
+      console.error('補充履歴の保存に失敗しました:', error.message);
     }
   };
 
@@ -256,78 +203,43 @@ export default function SystemAdmin() {
       role: 'store' as const,
     };
 
-    if (usingSupabase) {
-      try {
-        // 1. 店舗の作成
-        const { data: insertedShops, error: shopError } = await supabase
-          .from('shops')
-          .insert([newShopPayload])
-          .select();
+    try {
+      const res = await fetch('/api/shops', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newShopPayload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-        if (shopError) throw shopError;
+      if (data.shop) {
+        const createdShop = data.shop;
+        setShops(prev => [createdShop, ...prev]);
 
-        if (insertedShops && insertedShops[0]) {
-          const createdShop = insertedShops[0];
-          setShops(prev => [createdShop, ...prev]);
-
-          // 2. 店舗用の初期スターターキット商品の追加
-          const starterPayloads = DEFAULT_STARTER_ITEMS.map(starter => ({
-            ...starter,
-            shop_id: createdShop.email
-          }));
-
-          const { data: insertedItems, error: itemsError } = await supabase
-            .from('items')
-            .insert(starterPayloads)
-            .select();
-
-          if (!itemsError && insertedItems) {
-            setItems(prev => [...prev, ...insertedItems]);
-          }
-
-          addToast(`店舗「${createdShop.name}」を発行しました（初期データ自動セット済）`, 'success');
-        }
-      } catch (err: any) {
-        addToast(`店舗発行失敗: ${err.message}`, 'error');
-      } finally {
-        setCreating(false);
-      }
-    } else {
-      // ローカルストレージでの処理
-      setTimeout(() => {
-        const createdShop: Shop = {
-          id: Date.now().toString(),
-          ...newShopPayload,
-          created_at: new Date().toISOString()
-        };
-
-        const updatedShops = [createdShop, ...shops];
-        localStorage.setItem('shops', JSON.stringify(updatedShops));
-        setShops(updatedShops);
-
-        // スターター商品の追加
-        const localData = localStorage.getItem('inventory_items');
-        let allItems: Item[] = [];
-        if (localData) {
-          try {
-            allItems = JSON.parse(localData);
-          } catch (e) {}
-        }
-
-        const starterItems: Item[] = DEFAULT_STARTER_ITEMS.map((starter, index) => ({
-          id: `starter-${Date.now()}-${index}`,
+        // 2. 店舗用の初期スターターキット商品の追加
+        const starterPayloads = DEFAULT_STARTER_ITEMS.map(starter => ({
           ...starter,
-          shop_id: createdShop.email,
-          created_at: new Date().toISOString()
+          shop_id: createdShop.email
         }));
 
-        const mergedItems = [...allItems, ...starterItems];
-        localStorage.setItem('inventory_items', JSON.stringify(mergedItems));
-        setItems(mergedItems);
+        for (const starter of starterPayloads) {
+          const itemRes = await fetch('/api/items', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(starter)
+          });
+          if (itemRes.ok) {
+            const itemData = await itemRes.json();
+            if (itemData.item) setItems(prev => [...prev, itemData.item]);
+          }
+        }
 
-        addToast(`店舗「${createdShop.name}」をローカルに発行しました`, 'success');
-        setCreating(false);
-      }, 500);
+        addToast(`店舗「${createdShop.name}」を発行しました（初期データ自動セット済）`, 'success');
+      }
+    } catch (err: any) {
+      addToast(`店舗発行失敗: ${err.message}`, 'error');
+    } finally {
+      setCreating(false);
     }
 
     // フォームリセット
@@ -370,48 +282,20 @@ export default function SystemAdmin() {
       password: editPassword.trim()
     };
 
-    if (usingSupabase) {
-      try {
-        // 1. メールアドレスが変更された場合、関連商品の shop_id も更新する
-        if (newEmail.toLowerCase() !== oldEmail.toLowerCase()) {
-          const { error: itemsError } = await supabase
-            .from('items')
-            .update({ shop_id: newEmail })
-            .eq('shop_id', oldEmail);
+    try {
+      const res = await fetch(`/api/shops/${shopId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedFields)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-          if (itemsError) throw itemsError;
-        }
-
-        // 2. 店舗情報の更新
-        const { error } = await supabase
-          .from('shops')
-          .update(updatedFields)
-          .eq('id', shopId);
-
-        if (error) throw error;
-
-        setShops(prev => prev.map(s => s.id === shopId ? { ...s, ...updatedFields } : s));
-        setItems(prev => prev.map(item => item.shop_id === oldEmail ? { ...item, shop_id: newEmail } : item));
-        addToast('店舗情報を更新しました', 'success');
-      } catch (err: any) {
-        addToast(`更新失敗: ${err.message}`, 'error');
-      }
-    } else {
-      // ローカルストレージ
-      const updatedShops = shops.map(s => s.id === shopId ? { ...s, ...updatedFields } : s);
-      localStorage.setItem('shops', JSON.stringify(updatedShops));
-      setShops(updatedShops);
-
-      const localItems = localStorage.getItem('inventory_items');
-      if (localItems) {
-        try {
-          const allItems: Item[] = JSON.parse(localItems);
-          const updatedItems = allItems.map(item => item.shop_id === oldEmail ? { ...item, shop_id: newEmail } : item);
-          localStorage.setItem('inventory_items', JSON.stringify(updatedItems));
-          setItems(updatedItems);
-        } catch (e) {}
-      }
-      addToast('店舗情報を更新しました（ローカル）', 'success');
+      setShops(prev => prev.map(s => s.id === shopId ? { ...s, ...updatedFields } : s));
+      setItems(prev => prev.map(item => item.shop_id === oldEmail ? { ...item, shop_id: newEmail } : item));
+      addToast('店舗情報を更新しました', 'success');
+    } catch (err: any) {
+      addToast(`更新失敗: ${err.message}`, 'error');
     }
 
     setEditingShopId(null);
@@ -427,46 +311,15 @@ export default function SystemAdmin() {
     const confirmMsg = `店舗「${shop.name}」を完全に削除してもよろしいですか？\nこの店舗の登録商品・在庫データもすべて削除されます。この操作は取り消せません。`;
     if (!confirm(confirmMsg)) return;
 
-    if (usingSupabase) {
-      try {
-        // 1. 店舗に紐付く商品の削除
-        const { error: itemsError } = await supabase
-          .from('items')
-          .delete()
-          .eq('shop_id', shop.email);
+    try {
+      const res = await fetch(`/api/shops/${shop.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error);
 
-        if (itemsError) throw itemsError;
-
-        // 2. 店舗アカウントの削除
-        const { error: shopError } = await supabase
-          .from('shops')
-          .delete()
-          .eq('id', shop.id);
-
-        if (shopError) throw shopError;
-
-        setShops(prev => prev.filter(s => s.id !== shop.id));
-        setItems(prev => prev.filter(item => item.shop_id !== shop.email));
-        addToast(`店舗「${shop.name}」と関連在庫データを削除しました`, 'info');
-      } catch (err: any) {
-        addToast(`削除失敗: ${err.message}`, 'error');
-      }
-    } else {
-      // ローカルストレージでの削除
-      const updatedShops = shops.filter(s => s.id !== shop.id);
-      localStorage.setItem('shops', JSON.stringify(updatedShops));
-      setShops(updatedShops);
-
-      const localItems = localStorage.getItem('inventory_items');
-      if (localItems) {
-        try {
-          const allItems: Item[] = JSON.parse(localItems);
-          const filteredItems = allItems.filter(item => item.shop_id !== shop.email);
-          localStorage.setItem('inventory_items', JSON.stringify(filteredItems));
-          setItems(filteredItems);
-        } catch (e) {}
-      }
-      addToast(`店舗「${shop.name}」と関連在庫データを削除しました（ローカル）`, 'info');
+      setShops(prev => prev.filter(s => s.id !== shop.id));
+      setItems(prev => prev.filter(item => item.shop_id !== shop.email));
+      addToast(`店舗「${shop.name}」と関連在庫データを削除しました`, 'info');
+    } catch (err: any) {
+      addToast(`削除失敗: ${err.message}`, 'error');
     }
   };
 
@@ -496,48 +349,25 @@ export default function SystemAdmin() {
       shop_id: shopEmail,
     };
 
-    if (usingSupabase) {
-      try {
-        const { data, error } = await supabase
-          .from('items')
-          .insert([newItemPayload])
-          .select();
+    try {
+      const res = await fetch('/api/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newItemPayload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-        if (error) throw error;
-
-        if (data && data[0]) {
-          setItems(prev => [...prev, data[0]]);
-          if (stock > 0) {
-            addRestockLog(data[0].id, data[0].name, stock, price, shopEmail, usingSupabase);
-          }
-          addToast(`商品「${data[0].name}」を追加しました`, 'success');
+      if (data.item) {
+        setItems(prev => [...prev, data.item]);
+        if (stock > 0) {
+          addRestockLog(data.item.id, data.item.name, stock, price, shopEmail);
         }
-      } catch (err: any) {
-        addToast(`追加失敗: ${err.message}`, 'error');
-      } finally {
-        setAddingItem(false);
+        addToast(`商品「${data.item.name}」を追加しました`, 'success');
       }
-    } else {
-      // ローカルストレージ
-      const created: Item = {
-        id: `item-${Date.now()}`,
-        ...newItemPayload,
-        created_at: new Date().toISOString()
-      };
-      const localData = localStorage.getItem('inventory_items');
-      let allItems: Item[] = [];
-      if (localData) {
-        try {
-          allItems = JSON.parse(localData);
-        } catch (e) {}
-      }
-      const updated = [...allItems, created];
-      localStorage.setItem('inventory_items', JSON.stringify(updated));
-      setItems(updated);
-      if (stock > 0) {
-        addRestockLog(created.id, created.name, stock, price, shopEmail, usingSupabase);
-      }
-      addToast(`商品「${created.name}」を追加しました（ローカル）`, 'success');
+    } catch (err: any) {
+      addToast(`追加失敗: ${err.message}`, 'error');
+    } finally {
       setAddingItem(false);
     }
 
@@ -590,40 +420,23 @@ export default function SystemAdmin() {
       shop_id: shopEmail
     };
 
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase
-          .from('items')
-          .update(updatedItem)
-          .eq('id', id);
+    try {
+      const res = await fetch(`/api/items/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedItem)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-        if (error) throw error;
-
-        setItems(prev => prev.map(i => i.id === id ? { ...i, ...updatedItem } : i));
-        if (restockQty > 0) {
-          addRestockLog(id, updatedItem.name, restockQty, price, shopEmail, usingSupabase);
-        }
-        addToast('商品を更新しました', 'success');
-      } catch (err: any) {
-        addToast(`更新失敗: ${err.message}`, 'error');
-      } finally {
-        setUpdatingItem(false);
+      setItems(prev => prev.map(i => i.id === id ? { ...i, ...updatedItem } : i));
+      if (restockQty > 0) {
+        addRestockLog(id, updatedItem.name, restockQty, price, shopEmail);
       }
-    } else {
-      // ローカルストレージ
-      const localData = localStorage.getItem('inventory_items');
-      if (localData) {
-        try {
-          const allItems: Item[] = JSON.parse(localData);
-          const updated = allItems.map(i => i.id === id ? { ...i, ...updatedItem } : i);
-          localStorage.setItem('inventory_items', JSON.stringify(updated));
-          setItems(updated);
-          if (restockQty > 0) {
-            addRestockLog(id, updatedItem.name, restockQty, price, shopEmail, usingSupabase);
-          }
-        } catch (e) {}
-      }
-      addToast('商品を更新しました（ローカル）', 'success');
+      addToast('商品を更新しました', 'success');
+    } catch (err: any) {
+      addToast(`更新失敗: ${err.message}`, 'error');
+    } finally {
       setUpdatingItem(false);
     }
 
@@ -635,27 +448,14 @@ export default function SystemAdmin() {
   const handleDeleteProduct = async (id: string, name: string) => {
     if (!confirm(`商品「${name}」を削除してもよろしいですか？`)) return;
 
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase.from('items').delete().eq('id', id);
-        if (error) throw error;
-        setItems(prev => prev.filter(i => i.id !== id));
-        addToast(`商品「${name}」を削除しました`, 'info');
-      } catch (err: any) {
-        addToast(`削除失敗: ${err.message}`, 'error');
-      }
-    } else {
-      // ローカルストレージ
-      const localData = localStorage.getItem('inventory_items');
-      if (localData) {
-        try {
-          const allItems: Item[] = JSON.parse(localData);
-          const filtered = allItems.filter(i => i.id !== id);
-          localStorage.setItem('inventory_items', JSON.stringify(filtered));
-          setItems(filtered);
-        } catch (e) {}
-      }
-      addToast(`商品「${name}」を削除しました（ローカル）`, 'info');
+    try {
+      const res = await fetch(`/api/items/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error);
+      
+      setItems(prev => prev.filter(i => i.id !== id));
+      addToast(`商品「${name}」を削除しました`, 'info');
+    } catch (err: any) {
+      addToast(`削除失敗: ${err.message}`, 'error');
     }
   };
  
@@ -675,61 +475,7 @@ export default function SystemAdmin() {
   // 本部管理者自身のアカウント設定変更
   const handleUpdateAdminSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!adminEmailInput.trim()) {
-      addToast('メールアドレスを入力してください', 'error');
-      return;
-    }
-
-    setUpdatingAdmin(true);
-    const localEmail = localStorage.getItem('admin_email') || '';
-
-    const updatedFields: any = {
-      email: adminEmailInput.trim(),
-    };
-    if (adminPasswordInput.trim()) {
-      updatedFields.password = adminPasswordInput.trim();
-    }
-
-    if (usingSupabase) {
-      try {
-        const { error } = await supabase
-          .from('shops')
-          .update(updatedFields)
-          .eq('role', 'admin')
-          .eq('email', localEmail);
-
-        if (error) throw error;
-
-        localStorage.setItem('admin_email', adminEmailInput.trim());
-        addToast('本部管理者の設定を更新しました', 'success');
-        setAdminPasswordInput('');
-      } catch (err: any) {
-        addToast(`更新失敗: ${err.message}`, 'error');
-      } finally {
-        setUpdatingAdmin(false);
-      }
-    } else {
-      setTimeout(() => {
-        const localShops = localStorage.getItem('shops');
-        if (localShops) {
-          try {
-            const shopsList: Shop[] = JSON.parse(localShops);
-            const updatedList = shopsList.map(s => {
-              if (s.role === 'admin' && s.email === localEmail) {
-                return { ...s, ...updatedFields };
-              }
-              return s;
-            });
-            localStorage.setItem('shops', JSON.stringify(updatedList));
-            setShops(updatedList);
-            localStorage.setItem('admin_email', adminEmailInput.trim());
-            addToast('本部管理者の設定を更新しました（ローカル）', 'success');
-            setAdminPasswordInput('');
-          } catch (e) {}
-        }
-        setUpdatingAdmin(false);
-      }, 500);
-    }
+    addToast('設定変更はこのフェーズでは未実装です（APIへのリファクタリング中）', 'info');
   };
 
   // 集計データの計算
@@ -786,15 +532,6 @@ export default function SystemAdmin() {
         <p>新規店舗アカウントの発行・認証情報の設定、および各店舗の在庫概要をリアルタイムに集計・監査します。</p>
       </header>
 
-      {/* Supabase未設定バナー */}
-      {!usingSupabase && (
-        <div className="supabase-banner">
-          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <AlertCircle size={18} />
-            現在ローカルストレージモードで動作しています。追加した店舗や在庫データはブラウザにのみ保存されます。
-          </span>
-        </div>
-      )}
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '5rem', color: 'var(--text-secondary)' }}>
