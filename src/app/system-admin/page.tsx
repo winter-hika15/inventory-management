@@ -260,8 +260,8 @@ export default function SystemAdmin() {
 
   // 店舗の編集保存
   const handleSaveEdit = async (shopId: string) => {
-    if (!editName.trim() || !editEmail.trim() || !editPassword.trim()) {
-      addToast('店舗名、メールアドレス、パスワードを入力してください', 'error');
+    if (!editName.trim() || !editEmail.trim()) {
+      addToast('店舗名とメールアドレスを入力してください', 'error');
       return;
     }
 
@@ -278,11 +278,14 @@ export default function SystemAdmin() {
       return;
     }
 
-    const updatedFields = {
+    const updatedFields: any = {
       name: editName.trim(),
-      email: newEmail,
-      password: editPassword.trim()
+      email: newEmail
     };
+
+    if (editPassword.trim() !== '') {
+      updatedFields.password = editPassword.trim();
+    }
 
     try {
       const res = await fetch(`/api/shops/${shopId}`, {
@@ -659,13 +662,17 @@ export default function SystemAdmin() {
                         </div>
 
                         <div className="form-group">
-                          <label>ログインパスワード</label>
+                          <label>新しいログインパスワード</label>
                           <input 
                             type="text" 
                             className="form-input" 
+                            placeholder="変更する場合のみ入力"
                             value={editPassword}
                             onChange={e => setEditPassword(e.target.value)}
                           />
+                          <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.3rem', display: 'block' }}>
+                            セキュリティのため現在のパスワードは表示されません。
+                          </small>
                         </div>
 
                         <button 
