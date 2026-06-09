@@ -157,6 +157,10 @@ export default function Home() {
   const [editLogQuantity, setEditLogQuantity] = useState('0');
   const [editLogPrice, setEditLogPrice] = useState('0');
 
+  // 商品別補充実績サマリー編集用ステート
+  const [editingSummaryKey, setEditingSummaryKey] = useState<string | null>(null);
+  const [editSummaryQuantity, setEditSummaryQuantity] = useState('0');
+
   // トースト通知追加
   const addToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = Date.now();
@@ -722,6 +726,51 @@ export default function Home() {
     }
   };
 
+  // 商品別補充実績（サマリー）のインライン編集開始
+  const startEditingSummary = (summaryKey: string, qty: number) => {
+    setEditingSummaryKey(summaryKey);
+    setEditSummaryQuantity(qty.toString());
+  };
+
+  // 商品別補充実績（サマリー）の保存
+  const handleSaveSummaryEdit = async (itemName: string, price: number) => {
+    const newQty = parseInt(editSummaryQuantity) || 0;
+    const targetLogs = filteredHistory.filter(l => l.item_name === itemName && l.price === price);
+    
+    if (targetLogs.length === 0) return;
+
+    try {
+      // 1. 既存の該当ログをすべて削除
+      for (const log of targetLogs) {
+        await fetch(`/api/restock/${log.id}`, { method: 'DELETE' });
+      }
+
+      // 2. 新しい数量が0より大きければ、まとめて1つの新しいログとして追加
+      if (newQty > 0) {
+        const itemId = targetLogs[0].item_id || '';
+        const res = await fetch('/api/restock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            item_id: itemId,
+            item_name: itemName,
+            quantity: newQty,
+            price,
+            shop_id: currentShopEmail,
+          })
+        });
+        if (!res.ok) throw new Error((await res.json()).error);
+      }
+
+      addToast(`${itemName}の補充実績を更新しました`, 'success');
+      setEditingSummaryKey(null);
+      // 再取得して画面を更新
+      loadShopRestockHistory(currentShopEmail);
+    } catch (err: any) {
+      addToast(`実績更新エラー: ${err.message}`, 'error');
+    }
+  };
+
   // 商品の削除
   const handleDeleteItem = async (id: string, name: string) => {
     if (!confirm(`「${name}」を削除してもよろしいですか？`)) return;
@@ -1254,16 +1303,51 @@ export default function Home() {
                         </tr>
                       </thead>
                       <tbody>
-                        {Object.values(productSummaries).map((summary) => (
-                          <tr key={`${summary.itemName}-${summary.price}`}>
-                            <td style={{ fontWeight: 600 }}>{summary.itemName}</td>
-                            <td style={{ textAlign: 'right' }}>¥{summary.price.toLocaleString()}</td>
-                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{summary.quantity}</td>
-                            <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 600 }}>
-                              ¥{summary.total.toLocaleString()}
-                            </td>
-                          </tr>
-                        ))}
+                        {Object.entries(productSummaries).map(([key, summary]) => {
+                          const isEditing = editingSummaryKey === key;
+
+                          if (isEditing) {
+                            return (
+                              <tr key={key} style={{ background: 'rgba(255,255,255,0.05)' }}>
+                                <td style={{ fontWeight: 600 }}>{summary.itemName}</td>
+                                <td style={{ textAlign: 'right' }}>¥{summary.price.toLocaleString()}</td>
+                                <td style={{ textAlign: 'right' }}>
+                                  <input 
+                                    type="number" 
+                                    className="form-input" 
+                                    style={{ width: '80px', display: 'inline-block', textAlign: 'right', padding: '0.2rem' }} 
+                                    value={editSummaryQuantity} 
+                                    onChange={e => setEditSummaryQuantity(e.target.value)} 
+                                  />
+                                </td>
+                                <td style={{ textAlign: 'right' }}>
+                                  <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
+                                    <button onClick={() => handleSaveSummaryEdit(summary.itemName, summary.price)} className="btn btn-submit" style={{ padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}>保存</button>
+                                    <button onClick={() => setEditingSummaryKey(null)} className="btn" style={{ background: 'transparent', border: '1px solid var(--border)', padding: '0.2rem 0.5rem', fontSize: '0.8rem' }}>取消</button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          return (
+                            <tr key={key}>
+                              <td style={{ fontWeight: 600 }}>{summary.itemName}</td>
+                              <td style={{ textAlign: 'right' }}>¥{summary.price.toLocaleString()}</td>
+                              <td style={{ textAlign: 'right', fontWeight: 600 }}>
+                                {summary.quantity}
+                                {adminRole === 'admin' && (
+                                  <button onClick={() => startEditingSummary(key, summary.quantity)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', marginLeft: '0.5rem' }} title="実績を編集">
+                                    <Edit2 size={13} />
+                                  </button>
+                                )}
+                              </td>
+                              <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                ¥{summary.total.toLocaleString()}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
