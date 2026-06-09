@@ -164,17 +164,9 @@ export default function Home() {
     return 'normal';
   };
 
-  // ソート処理（不足「low」が最上部）
+  // ソート処理（登録日時が新しい順）
   const sortItems = (itemsList: Item[]): Item[] => {
     return [...itemsList].sort((a, b) => {
-      const statusA = getStatus(a.stock, a.threshold_low, a.threshold_high);
-      const statusB = getStatus(b.stock, b.threshold_low, b.threshold_high);
-      
-      const priority = { low: 1, normal: 2, high: 3 };
-      
-      if (priority[statusA] !== priority[statusB]) {
-        return priority[statusA] - priority[statusB];
-      }
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     });
   };
