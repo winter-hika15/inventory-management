@@ -148,6 +148,15 @@ export default function Home() {
   const [editHigh, setEditHigh] = useState('0');
   const [editUnit, setEditUnit] = useState('個');
 
+  // 補充・出庫の一括保存用ステート { [itemId: string]: number } (差分)
+  const [pendingDiffs, setPendingDiffs] = useState<{ [key: string]: number }>({});
+  const [isSaving, setIsSaving] = useState(false);
+
+  // 補充履歴編集用ステート
+  const [editingLogId, setEditingLogId] = useState<string | null>(null);
+  const [editLogQuantity, setEditLogQuantity] = useState('0');
+  const [editLogPrice, setEditLogPrice] = useState('0');
+
   // トースト通知追加
   const addToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = Date.now();
@@ -466,6 +475,7 @@ export default function Home() {
   // 表示店舗の切り替え検知
   useEffect(() => {
     if (currentShopEmail) {
+      setPendingDiffs({}); // 店舗切り替え時に未保存データをリセット
       loadShopItems(currentShopEmail);
       loadShopRestockHistory(currentShopEmail);
     }
@@ -477,46 +487,83 @@ export default function Home() {
     setItems(sorted);
   };
 
-  // 1個売る
-  const handleSell = async (item: Item) => {
+  // 1個売る（ローカルのみ）
+  const handleSell = (item: Item) => {
     if (item.stock <= 0) return;
     const newStock = item.stock - 1;
 
     const updated = items.map(i => i.id === item.id ? { ...i, stock: newStock } : i);
     syncItemsState(updated);
 
-    try {
-      const res = await fetch(`/api/items/${item.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stock: newStock })
-      });
-      if (!res.ok) throw new Error((await res.json()).error);
-      addToast(`${item.name}を1個出庫しました`, 'success');
-    } catch (error: any) {
-      addToast(`データベース更新エラー: ${error.message}`, 'error');
-    }
+    setPendingDiffs(prev => ({
+      ...prev,
+      [item.id]: (prev[item.id] || 0) - 1
+    }));
   };
 
-  // 1個補充する
-  const handleRestock = async (item: Item) => {
+  // 1個補充する（ローカルのみ）
+  const handleRestock = (item: Item) => {
     const newStock = item.stock + 1;
 
     const updated = items.map(i => i.id === item.id ? { ...i, stock: newStock } : i);
     syncItemsState(updated);
-    addRestockLog(item.id, item.name, 1, item.price, currentShopEmail);
 
-    try {
-      const res = await fetch(`/api/items/${item.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stock: newStock })
-      });
-      if (!res.ok) throw new Error((await res.json()).error);
-      addToast(`${item.name}を1個補充しました`, 'success');
-    } catch (error: any) {
-      addToast(`データベース更新エラー: ${error.message}`, 'error');
+    setPendingDiffs(prev => ({
+      ...prev,
+      [item.id]: (prev[item.id] || 0) + 1
+    }));
+  };
+
+  // 変更を一括保存
+  const handleSaveChanges = async () => {
+    const changes = Object.entries(pendingDiffs).filter(([_, diff]) => diff !== 0);
+    if (changes.length === 0) return;
+
+    setIsSaving(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const [itemId, diff] of changes) {
+      const item = items.find(i => i.id === itemId);
+      if (!item) continue;
+
+      try {
+        // 在庫の更新
+        const res = await fetch(`/api/items/${itemId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stock: item.stock })
+        });
+        if (!res.ok) throw new Error((await res.json()).error);
+
+        // プラスの変更（補充）なら履歴を追加
+        if (diff > 0) {
+          await addRestockLog(item.id, item.name, diff, item.price, currentShopEmail);
+        }
+        successCount++;
+      } catch (err: any) {
+        console.error(`商品ID ${itemId} の更新失敗:`, err);
+        errorCount++;
+      }
     }
+
+    setIsSaving(false);
+    if (errorCount === 0) {
+      addToast('すべての変更を保存しました', 'success');
+      setPendingDiffs({});
+    } else {
+      addToast(`${successCount}件保存、${errorCount}件失敗しました。`, 'error');
+      // 失敗した場合は最新データを再ロード
+      loadShopItems(currentShopEmail);
+      setPendingDiffs({});
+    }
+  };
+
+  // 変更をキャンセル
+  const handleCancelChanges = () => {
+    loadShopItems(currentShopEmail);
+    setPendingDiffs({});
+    addToast('変更をキャンセルしました', 'info');
   };
 
 
@@ -630,6 +677,49 @@ export default function Home() {
     }
 
     setEditingItemId(null);
+  };
+
+  // 補充履歴のインライン編集の開始
+  const startEditingLog = (log: RestockHistory) => {
+    setEditingLogId(log.id);
+    setEditLogQuantity(log.quantity.toString());
+    setEditLogPrice(log.price.toString());
+  };
+
+  // 補充履歴の保存
+  const handleSaveEditLog = async (id: string) => {
+    const qty = parseInt(editLogQuantity) || 0;
+    const price = parseInt(editLogPrice) || 0;
+
+    try {
+      const res = await fetch(`/api/restock/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity: qty, price })
+      });
+      if (!res.ok) throw new Error((await res.json()).error);
+      
+      setRestockHistory(prev => prev.map(log => log.id === id ? { ...log, quantity: qty, price } : log));
+      addToast('補充履歴を更新しました', 'success');
+      setEditingLogId(null);
+    } catch (err: any) {
+      addToast(`履歴更新エラー: ${err.message}`, 'error');
+    }
+  };
+
+  // 補充履歴の削除
+  const handleDeleteLog = async (id: string, itemName: string) => {
+    if (!confirm(`「${itemName}」の補充履歴を本当に削除しますか？`)) return;
+
+    try {
+      const res = await fetch(`/api/restock/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error((await res.json()).error);
+
+      setRestockHistory(prev => prev.filter(log => log.id !== id));
+      addToast('補充履歴を削除しました', 'info');
+    } catch (err: any) {
+      addToast(`履歴削除エラー: ${err.message}`, 'error');
+    }
   };
 
   // 商品の削除
@@ -1197,16 +1287,52 @@ export default function Home() {
                     {filteredHistory.map((log) => {
                       const logDate = new Date(log.created_at);
                       const formattedDate = `${logDate.getMonth() + 1}/${logDate.getDate()} ${String(logDate.getHours()).padStart(2, '0')}:${String(logDate.getMinutes()).padStart(2, '0')}`;
-                      return (
-                        <div key={log.id} className="timeline-item">
-                          <div className="timeline-date">{formattedDate}</div>
-                          <div className="timeline-content">
-                            商品 <span className="timeline-highlight">「{log.item_name}」</span> を 
-                            <span className="timeline-badge" style={{ marginLeft: '0.4rem', marginRight: '0.4rem' }}>
-                              {log.quantity} 個
-                            </span> 
-                            補充しました (単価: ¥{log.price.toLocaleString()})
+                      
+                      const isEditingLog = editingLogId === log.id;
+                      if (isEditingLog) {
+                        return (
+                          <div key={log.id} className="timeline-item" style={{ background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '8px' }}>
+                            <div style={{ marginBottom: '0.5rem', fontWeight: 600 }}>「{log.item_name}」の履歴を編集</div>
+                            <div className="form-grid-2">
+                              <div className="form-group">
+                                <label>補充数量</label>
+                                <input type="number" className="form-input" value={editLogQuantity} onChange={e => setEditLogQuantity(e.target.value)} />
+                              </div>
+                              <div className="form-group">
+                                <label>補充単価(円)</label>
+                                <input type="number" className="form-input" value={editLogPrice} onChange={e => setEditLogPrice(e.target.value)} />
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                              <button onClick={() => handleSaveEditLog(log.id)} className="btn btn-submit" style={{ padding: '0.4rem 1rem' }}>保存</button>
+                              <button onClick={() => setEditingLogId(null)} className="btn" style={{ background: 'transparent', border: '1px solid var(--border)' }}>キャンセル</button>
+                            </div>
                           </div>
+                        );
+                      }
+
+                      return (
+                        <div key={log.id} className="timeline-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <div className="timeline-date">{formattedDate}</div>
+                            <div className="timeline-content">
+                              商品 <span className="timeline-highlight">「{log.item_name}」</span> を 
+                              <span className="timeline-badge" style={{ marginLeft: '0.4rem', marginRight: '0.4rem' }}>
+                                {log.quantity} 個
+                              </span> 
+                              補充しました (単価: ¥{log.price.toLocaleString()})
+                            </div>
+                          </div>
+                          {adminRole === 'admin' && (
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.2rem' }}>
+                              <button onClick={() => startEditingLog(log)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} title="履歴を編集">
+                                <Edit2 size={15} />
+                              </button>
+                              <button onClick={() => handleDeleteLog(log.id, log.item_name)} style={{ background: 'transparent', border: 'none', color: 'var(--color-low)', cursor: 'pointer' }} title="履歴を削除">
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1336,6 +1462,35 @@ export default function Home() {
           </section>
         </div>
       </main>
+      {/* 保存アクションバー */}
+      {Object.keys(pendingDiffs).length > 0 && Object.values(pendingDiffs).some(d => d !== 0) && (
+        <div className="save-action-bar animate-fade-in glass-card" style={{
+          position: 'fixed',
+          bottom: '2rem',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 100,
+          display: 'flex',
+          gap: '1rem',
+          alignItems: 'center',
+          padding: '1rem 2rem',
+          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
+          border: '1px solid var(--accent)',
+          borderRadius: '12px'
+        }}>
+          <div>
+            <span style={{ fontWeight: 600, marginRight: '1rem', color: 'var(--text-primary)' }}>未保存の変更があります</span>
+          </div>
+          <button className="btn btn-submit" onClick={handleSaveChanges} disabled={isSaving} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <Save size={16} />
+            {isSaving ? '保存中...' : '変更を保存する'}
+          </button>
+          <button className="btn" style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-primary)' }} onClick={handleCancelChanges} disabled={isSaving}>
+            キャンセル
+          </button>
+        </div>
+      )}
+
     </div>
   );
 }
