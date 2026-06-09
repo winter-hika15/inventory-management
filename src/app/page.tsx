@@ -518,9 +518,14 @@ export default function Home() {
     }));
   };
 
-  // 変更を一括保存
-  const handleSaveChanges = async () => {
-    const changes = Object.entries(pendingDiffs).filter(([_, diff]) => diff !== 0);
+  // 変更を一括または個別保存
+  const handleSaveChanges = async (targetItemId?: string) => {
+    const changes = Object.entries(pendingDiffs).filter(([id, diff]) => {
+      if (diff === 0) return false;
+      if (targetItemId && id !== targetItemId) return false;
+      return true;
+    });
+
     if (changes.length === 0) return;
 
     setIsSaving(true);
@@ -553,13 +558,22 @@ export default function Home() {
 
     setIsSaving(false);
     if (errorCount === 0) {
-      addToast('すべての変更を保存しました', 'success');
-      setPendingDiffs({});
+      if (!targetItemId) {
+        addToast('すべての変更を保存しました', 'success');
+        setPendingDiffs({});
+      } else {
+        addToast('変更を保存しました', 'success');
+        setPendingDiffs(prev => {
+          const next = { ...prev };
+          delete next[targetItemId];
+          return next;
+        });
+      }
     } else {
       addToast(`${successCount}件保存、${errorCount}件失敗しました。`, 'error');
       // 失敗した場合は最新データを再ロード
       loadShopItems(currentShopEmail);
-      setPendingDiffs({});
+      if (!targetItemId) setPendingDiffs({});
     }
   };
 
@@ -998,20 +1012,35 @@ export default function Home() {
             <>
               <div className="list-section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <div>
-                  <h2>在庫状況一覧</h2>
+                  <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    在庫状況一覧
+                  </h2>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                     全 {items.length} 品目 (総在庫数: {totalStockCount}点)
                   </span>
                 </div>
-                <button 
-                  onClick={downloadInventoryCSV}
-                  className="btn-download"
-                  title="在庫一覧をExcel対応のCSV形式でダウンロードします"
-                  disabled={items.length === 0}
-                >
-                  <Download size={14} />
-                  CSV保存 (Excel対応)
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  {Object.keys(pendingDiffs).length > 0 && Object.values(pendingDiffs).some(d => d !== 0) && (
+                    <div className="animate-fade-in" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginRight: '0.5rem' }}>
+                      <button className="btn btn-submit" onClick={() => handleSaveChanges()} disabled={isSaving} style={{ padding: '0.4rem 1rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <Save size={14} />
+                        {isSaving ? '保存中...' : '全て一括保存'}
+                      </button>
+                      <button className="btn" style={{ padding: '0.4rem 1rem', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-primary)' }} onClick={handleCancelChanges} disabled={isSaving}>
+                        取消
+                      </button>
+                    </div>
+                  )}
+                  <button 
+                    onClick={downloadInventoryCSV}
+                    className="btn-download"
+                    title="在庫一覧をExcel対応のCSV形式でダウンロードします"
+                    disabled={items.length === 0}
+                  >
+                    <Download size={14} />
+                    CSV保存 (Excel対応)
+                  </button>
+                </div>
               </div>
 
               {loading ? (
@@ -1152,7 +1181,7 @@ export default function Home() {
                         </div>
 
                         {/* 操作アクション */}
-                        <div className="action-buttons">
+                        <div className="action-buttons" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
                           <button 
                             className="btn btn-sell" 
                             onClick={() => handleSell(item)}
@@ -1194,6 +1223,37 @@ export default function Home() {
                                 <Trash2 size={15} />
                               </button>
                             </>
+                          )}
+
+                          {/* 個別保存・キャンセルボタン */}
+                          {pendingDiffs[item.id] !== undefined && pendingDiffs[item.id] !== 0 && (
+                            <div className="animate-fade-in" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginLeft: 'auto' }}>
+                              <button 
+                                onClick={() => handleSaveChanges(item.id)}
+                                className="btn btn-submit"
+                                style={{ padding: '0.4rem 0.8rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                                disabled={isSaving}
+                              >
+                                <Save size={14} />
+                                {pendingDiffs[item.id] > 0 ? `+${pendingDiffs[item.id]} 確定` : `${pendingDiffs[item.id]} 確定`}
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  loadShopItems(currentShopEmail);
+                                  setPendingDiffs(prev => {
+                                    const next = { ...prev };
+                                    delete next[item.id];
+                                    return next;
+                                  });
+                                }}
+                                className="btn"
+                                style={{ padding: '0.4rem', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                                disabled={isSaving}
+                                title="変更を元に戻す"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1546,35 +1606,6 @@ export default function Home() {
           </section>
         </div>
       </main>
-      {/* 保存アクションバー */}
-      {Object.keys(pendingDiffs).length > 0 && Object.values(pendingDiffs).some(d => d !== 0) && (
-        <div className="save-action-bar animate-fade-in glass-card" style={{
-          position: 'fixed',
-          bottom: '2rem',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 100,
-          display: 'flex',
-          gap: '1rem',
-          alignItems: 'center',
-          padding: '1rem 2rem',
-          boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
-          border: '1px solid var(--accent)',
-          borderRadius: '12px'
-        }}>
-          <div>
-            <span style={{ fontWeight: 600, marginRight: '1rem', color: 'var(--text-primary)' }}>未保存の変更があります</span>
-          </div>
-          <button className="btn btn-submit" onClick={handleSaveChanges} disabled={isSaving} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <Save size={16} />
-            {isSaving ? '保存中...' : '変更を保存する'}
-          </button>
-          <button className="btn" style={{ background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-primary)' }} onClick={handleCancelChanges} disabled={isSaving}>
-            キャンセル
-          </button>
-        </div>
-      )}
-
     </div>
   );
 }
