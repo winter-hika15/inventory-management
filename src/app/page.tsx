@@ -221,21 +221,16 @@ export default function Home() {
     }
     const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const filename = `在庫一覧_${currentShopEmail}_${today}.csv`;
-    const headers = ['商品ID', '商品名', '在庫数', '単位', '単価(円)', '合計金額(円)', '不足しきい値', '過剰しきい値', '状況'];
+    const headers = ['商品ID', '商品名', '在庫数', '単位', '単価(円)', '合計金額(円)'];
     
     const rows = items.map(item => {
-      const status = getStatus(item.stock, item.threshold_low, item.threshold_high);
-      const statusLabel = status === 'low' ? '不足 (要発注)' : status === 'high' ? '過剰' : '適正';
       return [
         item.id,
         item.name,
         item.stock.toString(),
         item.unit || '個',
         item.price.toString(),
-        (item.stock * item.price).toString(),
-        item.threshold_low.toString(),
-        item.threshold_high.toString(),
-        statusLabel
+        (item.stock * item.price).toString()
       ];
     });
 
