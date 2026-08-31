@@ -138,6 +138,7 @@ export default function Home() {
   const [newItemUnit, setNewItemUnit] = useState('個');
   const [newItemLow, setNewItemLow] = useState('5');
   const [newItemHigh, setNewItemHigh] = useState('20');
+  const [isInitialStock, setIsInitialStock] = useState(true);
 
   // インライン編集フォーム用
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -614,7 +615,7 @@ export default function Home() {
 
       if (data.item) {
         syncItemsState([...items, data.item]);
-        if (stock > 0) {
+        if (stock > 0 && !isInitialStock) {
           addRestockLog(data.item.id, data.item.name, stock, price, currentShopEmail);
         }
         addToast(`商品「${data.item.name}」を追加しました`, 'success');
@@ -630,6 +631,7 @@ export default function Home() {
     setNewItemUnit('個');
     setNewItemLow('5');
     setNewItemHigh('20');
+    setIsInitialStock(true);
   };
 
   // インライン編集の開始
@@ -672,10 +674,6 @@ export default function Home() {
 
     const updated = items.map(i => i.id === id ? { ...i, ...updatedItem } : i);
     syncItemsState(updated);
-
-    if (restockQty > 0) {
-      addRestockLog(id, updatedItem.name, restockQty, price, currentShopEmail);
-    }
 
     try {
       const res = await fetch(`/api/items/${id}`, {
@@ -1531,6 +1529,21 @@ export default function Home() {
                       <option value="袋">袋</option>
                     </select>
                   </div>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '6px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 500, userSelect: 'none' }}>
+                    <input 
+                      type="checkbox"
+                      checked={isInitialStock}
+                      onChange={e => setIsInitialStock(e.target.checked)}
+                      style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                    />
+                    <span>初期在庫として登録（発注実績に記録しない）</span>
+                  </label>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.25rem', marginLeft: '1.5rem', lineHeight: '1.3' }}>
+                    ※新店舗導入時などの元々ある在庫を入力する場合はチェックをオンにしてください。今月の発注・補充実績から除外されます。
+                  </p>
                 </div>
 
                 <div className="form-group">
