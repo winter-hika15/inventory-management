@@ -22,7 +22,8 @@ import {
   Calendar,
   FileText,
   TrendingUp,
-  Download
+  Download,
+  ClipboardCheck
 } from 'lucide-react';
 
 interface Item {
@@ -161,6 +162,11 @@ export default function Home() {
   // 商品別補充実績サマリー編集用ステート
   const [editingSummaryKey, setEditingSummaryKey] = useState<string | null>(null);
   const [editSummaryQuantity, setEditSummaryQuantity] = useState('0');
+
+  // 実在庫カウント（棚卸）モーダル用ステート
+  const [countingItem, setCountingItem] = useState<Item | null>(null);
+  const [countedStock, setCountedStock] = useState<number>(0);
+  const [isCountingSaving, setIsCountingSaving] = useState(false);
 
   // トースト通知追加
   const addToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -578,6 +584,52 @@ export default function Home() {
     loadShopItems(currentShopEmail);
     setPendingDiffs({});
     addToast('変更をキャンセルしました', 'info');
+  };
+
+  // 在庫を数えるモーダルを開く
+  const openCountModal = (item: Item) => {
+    setCountingItem(item);
+    setCountedStock(item.stock);
+  };
+
+  // 実在庫カウントの保存（※月別補充レポートには反映されない）
+  const handleSaveCountedStock = async () => {
+    if (!countingItem) return;
+    if (countedStock < 0 || isNaN(countedStock)) {
+      addToast('0以上の有効な在庫数を入力してください', 'error');
+      return;
+    }
+
+    setIsCountingSaving(true);
+    try {
+      // 在庫の更新（※addRestockLogは呼ばないため月別補充レポートには反映されません）
+      const res = await fetch(`/api/items/${countingItem.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock: countedStock })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '在庫の更新に失敗しました');
+
+      // ローカルの在庫状態を同期
+      const updated = items.map(i => i.id === countingItem.id ? { ...i, stock: countedStock } : i);
+      syncItemsState(updated);
+
+      // この商品の未保存の差分があればクリア
+      setPendingDiffs(prev => {
+        const next = { ...prev };
+        delete next[countingItem.id];
+        return next;
+      });
+
+      addToast(`「${countingItem.name}」の在庫数を ${countedStock} ${countingItem.unit || '個'} に更新しました（補充レポートには記録されません）`, 'success');
+      setCountingItem(null);
+    } catch (err: any) {
+      console.error('実在庫の更新失敗:', err);
+      addToast(`在庫数の更新に失敗しました: ${err.message}`, 'error');
+    } finally {
+      setIsCountingSaving(false);
+    }
   };
 
 
@@ -1192,6 +1244,14 @@ export default function Home() {
                             <Plus size={15} />
                             補充する
                           </button>
+                          <button 
+                            className="btn btn-count" 
+                            onClick={() => openCountModal(item)}
+                            title="現在の実在庫を数えて直接更新します（月別補充レポートには反映されません）"
+                          >
+                            <ClipboardCheck size={15} />
+                            現在の在庫を数える
+                          </button>
                           {adminRole === 'admin' && (
                             <>
                               <button 
@@ -1597,7 +1657,7 @@ export default function Home() {
                 現在、店舗スタッフ用画面でログインしています。
               </p>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.4', marginTop: '0.4rem' }}>
-                商品の「出庫（1個売る）」および「補充」のみ可能です。商品の新規登録や編集・削除は本部管理者が行います。
+                商品の「出庫（1個売る）」「補充」「現在の在庫を数える（棚卸）」が可能です。商品の新規登録や編集・削除は本部管理者が行います。
               </p>
             </section>
           )}
@@ -1614,6 +1674,165 @@ export default function Home() {
           </section>
         </div>
       </main>
+
+      {/* 現在の在庫を数える（実在庫カウント）モーダル */}
+      {countingItem && (
+        <div className="modal-overlay animate-fade-in" onClick={() => !isCountingSaving && setCountingItem(null)}>
+          <div className="count-modal-content animate-fade-in" onClick={e => e.stopPropagation()}>
+            <div className="modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <ClipboardCheck size={22} style={{ color: '#38bdf8' }} />
+                <span style={{ fontSize: '1.15rem', fontWeight: 600 }}>現在の在庫を数える</span>
+              </div>
+              <button 
+                onClick={() => setCountingItem(null)} 
+                disabled={isCountingSaving}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '0.2rem' }}
+                title="閉じる"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* 商品情報 */}
+            <div className="count-info-box">
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>対象商品</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                {countingItem.name}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                <span>現在のシステム在庫数:</span>
+                <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '0.95rem' }}>
+                  {countingItem.stock} {countingItem.unit || '個'}
+                </span>
+              </div>
+            </div>
+
+            {/* カウント入力 */}
+            <div className="form-group" style={{ marginBottom: '1rem' }}>
+              <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 500, marginBottom: '0.5rem' }}>
+                実際に数えた在庫数 ({countingItem.unit || '個'})
+              </label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                <button 
+                  type="button" 
+                  className="count-stepper-btn"
+                  onClick={() => setCountedStock(prev => Math.max(0, prev - 1))}
+                  disabled={countedStock <= 0 || isCountingSaving}
+                  style={{ minWidth: '42px' }}
+                >
+                  -1
+                </button>
+                <input 
+                  type="number" 
+                  className="form-input" 
+                  value={countedStock}
+                  min={0}
+                  onChange={e => {
+                    const val = parseInt(e.target.value, 10);
+                    setCountedStock(isNaN(val) ? 0 : Math.max(0, val));
+                  }}
+                  style={{ 
+                    textAlign: 'center', 
+                    fontSize: '1.25rem', 
+                    fontWeight: 600,
+                    letterSpacing: '0.05em',
+                    color: '#38bdf8' 
+                  }}
+                  autoFocus
+                />
+                <button 
+                  type="button" 
+                  className="count-stepper-btn"
+                  onClick={() => setCountedStock(prev => prev + 1)}
+                  disabled={isCountingSaving}
+                  style={{ minWidth: '42px' }}
+                >
+                  +1
+                </button>
+              </div>
+
+              {/* クイック加算・減算ボタン */}
+              <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button 
+                  type="button" 
+                  className="count-stepper-btn"
+                  onClick={() => setCountedStock(prev => Math.max(0, prev - 10))}
+                  disabled={countedStock <= 0 || isCountingSaving}
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                >
+                  -10
+                </button>
+                <button 
+                  type="button" 
+                  className="count-stepper-btn"
+                  onClick={() => setCountedStock(prev => Math.max(0, prev - 5))}
+                  disabled={countedStock <= 0 || isCountingSaving}
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                >
+                  -5
+                </button>
+                <button 
+                  type="button" 
+                  className="count-stepper-btn"
+                  onClick={() => setCountedStock(prev => prev + 5)}
+                  disabled={isCountingSaving}
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                >
+                  +5
+                </button>
+                <button 
+                  type="button" 
+                  className="count-stepper-btn"
+                  onClick={() => setCountedStock(prev => prev + 10)}
+                  disabled={isCountingSaving}
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                >
+                  +10
+                </button>
+                <button 
+                  type="button" 
+                  className="count-stepper-btn"
+                  onClick={() => setCountedStock(0)}
+                  disabled={countedStock === 0 || isCountingSaving}
+                  style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', color: 'var(--text-muted)' }}
+                  title="在庫を0にリセット"
+                >
+                  0にリセット
+                </button>
+              </div>
+            </div>
+
+            {/* 月別補充レポートに反映されない旨の明示案内 */}
+            <div className="count-report-notice">
+              💡 <strong>月別補充レポートには反映されません</strong><br />
+              現在の実在庫数を直接更新します。仕入れ等の「補充履歴」としては記録されません。
+            </div>
+
+            {/* モーダルフッター */}
+            <div className="modal-footer" style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+              <button 
+                type="button" 
+                className="btn btn-cancel" 
+                onClick={() => setCountingItem(null)}
+                disabled={isCountingSaving}
+              >
+                キャンセル
+              </button>
+              <button 
+                type="button" 
+                className="btn btn-submit"
+                onClick={handleSaveCountedStock}
+                disabled={isCountingSaving}
+                style={{ background: '#0284c7', borderColor: '#38bdf8', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+              >
+                <CheckCircle2 size={16} />
+                {isCountingSaving ? '更新中...' : 'この数量で確定する'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
